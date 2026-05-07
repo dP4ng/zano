@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   Dialog,
@@ -23,6 +23,12 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Field, FieldLabel } from "@/components/ui/field";
+import {
+  MODEL_ITEMS_BY_RUNTIME,
+  RUNTIME_ITEMS,
+  defaultModelForRuntime,
+  type AgentRuntime,
+} from "@/lib/agent-runtime";
 
 interface CreateAgentDialogProps {
   open: boolean;
@@ -30,12 +36,6 @@ interface CreateAgentDialogProps {
   onCreated: () => void;
   serverId: string;
 }
-
-const MODEL_ITEMS = [
-  { value: "opus", label: "Opus — Most capable" },
-  { value: "sonnet", label: "Sonnet — Balanced" },
-  { value: "haiku", label: "Haiku — Fastest" },
-];
 
 export function CreateAgentDialog({
   open,
@@ -45,6 +45,7 @@ export function CreateAgentDialog({
 }: CreateAgentDialogProps) {
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
+  const [runtime, setRuntime] = useState<AgentRuntime>("claude");
   const [model, setModel] = useState("opus");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [saving, setSaving] = useState(false);
@@ -52,11 +53,14 @@ export function CreateAgentDialog({
 
   useEffect(() => {
     if (open) {
-      setDisplayName("");
-      setDescription("");
-      setModel("opus");
-      setSystemPrompt("");
-      setError("");
+      queueMicrotask(() => {
+        setDisplayName("");
+        setDescription("");
+        setRuntime("claude");
+        setModel("opus");
+        setSystemPrompt("");
+        setError("");
+      });
     }
   }, [open]);
 
@@ -80,6 +84,7 @@ export function CreateAgentDialog({
         body: JSON.stringify({
           display_name: displayName,
           description,
+          runtime,
           model,
           system_prompt: systemPrompt,
           server_id: serverId,
@@ -100,7 +105,9 @@ export function CreateAgentDialog({
     }
   }
 
-  const selectedModel = MODEL_ITEMS.find((m) => m.value === model) ?? MODEL_ITEMS[0];
+  const modelItems = MODEL_ITEMS_BY_RUNTIME[runtime];
+  const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === runtime) ?? RUNTIME_ITEMS[0];
+  const selectedModel = modelItems.find((m) => m.value === model) ?? modelItems[0];
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -137,19 +144,44 @@ export function CreateAgentDialog({
               </Field>
 
               <Field>
+                <FieldLabel>Runtime</FieldLabel>
+                <Select
+                  value={selectedRuntime}
+                  onValueChange={(val) => {
+                    if (!val) return;
+                    const nextRuntime = (val as typeof selectedRuntime).value;
+                    setRuntime(nextRuntime);
+                    setModel(defaultModelForRuntime(nextRuntime));
+                  }}
+                  items={RUNTIME_ITEMS}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a runtime" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {RUNTIME_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </Field>
+
+              <Field>
                 <FieldLabel>Model</FieldLabel>
                 <Select
                   value={selectedModel}
                   onValueChange={(val) => {
                     if (val) setModel((val as typeof selectedModel).value);
                   }}
-                  items={MODEL_ITEMS}
+                  items={modelItems}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a model" />
                   </SelectTrigger>
                   <SelectPopup>
-                    {MODEL_ITEMS.map((item) => (
+                    {modelItems.map((item) => (
                       <SelectItem key={item.value} value={item}>
                         {item.label}
                       </SelectItem>

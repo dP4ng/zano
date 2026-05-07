@@ -23,18 +23,18 @@ import {
 } from "@/components/ui/select";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { CheckIcon, CopyIcon, LoaderIcon, MonitorIcon, TerminalIcon } from "lucide-react";
+import {
+  MODEL_ITEMS_BY_RUNTIME,
+  RUNTIME_ITEMS,
+  defaultModelForRuntime,
+  type AgentRuntime,
+} from "@/lib/agent-runtime";
 
 interface SetupWizardProps {
   serverId: string;
   serverSlug: string;
   onComplete: () => void;
 }
-
-const MODEL_ITEMS = [
-  { value: "opus", label: "Opus — Most capable" },
-  { value: "sonnet", label: "Sonnet — Balanced" },
-  { value: "haiku", label: "Haiku — Fastest" },
-];
 
 type Step = "connect" | "connected" | "create-agent";
 
@@ -47,6 +47,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   // Create agent form
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime>("claude");
   const [agentModel, setAgentModel] = useState("sonnet");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [creatingAgent, setCreatingAgent] = useState(false);
@@ -59,7 +60,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   useEffect(() => {
     const storedKey = sessionStorage.getItem("zano_setup_key");
     if (storedKey) {
-      setApiKey(storedKey);
+      queueMicrotask(() => setApiKey(storedKey));
       sessionStorage.removeItem("zano_setup_key");
     }
   }, []);
@@ -97,7 +98,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   }, [step, apiKey, serverId]);
 
   const npxCommand = apiKey
-    ? `npx @fehey/zano-bridge --api-key ${apiKey}`
+    ? `npx @dp4ng/x-bridge --api-key ${apiKey} --server-url ${process.env.NEXT_PUBLIC_ZANO_SERVER_URL || "<your-zano-server-url>"}`
     : "";
 
   async function handleCopy() {
@@ -121,6 +122,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
         body: JSON.stringify({
           display_name: agentName.trim(),
           description: agentDescription.trim() || undefined,
+          runtime: agentRuntime,
           model: agentModel,
           system_prompt: agentPrompt.trim() || undefined,
           server_id: serverId,
@@ -132,7 +134,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
         throw new Error(data.error || "Failed to create agent");
       }
 
-      const { agent, channel } = await res.json();
+      const { channel } = await res.json();
       // Navigate to the agent's DM
       if (channel?.id) {
         router.push(`/s/${serverSlug}/dm/${channel.id}`);
@@ -148,7 +150,9 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
     onComplete();
   }
 
-  const selectedModel = MODEL_ITEMS.find((m) => m.value === agentModel) ?? MODEL_ITEMS[1];
+  const modelItems = MODEL_ITEMS_BY_RUNTIME[agentRuntime];
+  const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === agentRuntime) ?? RUNTIME_ITEMS[0];
+  const selectedModel = modelItems.find((m) => m.value === agentModel) ?? modelItems[0];
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) handleSkip(); }}>
@@ -276,19 +280,44 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
                   </Field>
 
                   <Field>
+                    <FieldLabel>Runtime</FieldLabel>
+                    <Select
+                      value={selectedRuntime}
+                      onValueChange={(val) => {
+                        if (!val) return;
+                        const nextRuntime = (val as typeof selectedRuntime).value;
+                        setAgentRuntime(nextRuntime);
+                        setAgentModel(defaultModelForRuntime(nextRuntime));
+                      }}
+                      items={RUNTIME_ITEMS}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a runtime" />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {RUNTIME_ITEMS.map((item) => (
+                          <SelectItem key={item.value} value={item}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
+                  </Field>
+
+                  <Field>
                     <FieldLabel>Model</FieldLabel>
                     <Select
                       value={selectedModel}
                       onValueChange={(val) => {
                         if (val) setAgentModel((val as typeof selectedModel).value);
                       }}
-                      items={MODEL_ITEMS}
+                      items={modelItems}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select a model" />
                       </SelectTrigger>
                       <SelectPopup>
-                        {MODEL_ITEMS.map((item) => (
+                        {modelItems.map((item) => (
                           <SelectItem key={item.value} value={item}>
                             {item.label}
                           </SelectItem>

@@ -4,7 +4,7 @@ Context for AI coding assistants (Claude Code, Cursor, etc.) working in this rep
 
 ## What this project is
 
-Zano is a chat platform where humans and AI agents share channels. Agents are long-running Claude Code processes spawned by a local "bridge" daemon; they communicate exclusively through a `zano` CLI that talks to Supabase. The web UI is Next.js + Supabase Realtime.
+Zano is a chat platform where humans and AI agents share channels. Agents are long-running local CLI runtime processes spawned by a local "bridge" daemon; supported runtimes include Claude Code, Codex CLI, and Kimi CLI. Agents communicate exclusively through a `zano` CLI that talks to Supabase. The web UI is Next.js + Supabase Realtime.
 
 ## Repo shape
 
@@ -23,7 +23,7 @@ Tooling: pnpm 10 workspaces + Turborepo. Node ≥ 20.
 
 - **Database schema**: `packages/db/src/schema.sql` is the source of truth. Apply via Supabase SQL editor. RLS lives in the same file plus `fix-rls.sql`.
 - **Auto-onboarding trigger**: `packages/db/src/onboarding-trigger.sql` — runs on every new profile to create a default agent + channel.
-- **Bridge entry point**: `apps/bridge/src/index.ts` → `bridge.ts`. Subscribes to channels via Supabase Realtime, spawns Claude Code subprocesses through `agent-manager.ts`.
+- **Bridge entry point**: `apps/bridge/src/index.ts` → `bridge.ts`. Subscribes to channels via Supabase Realtime, spawns runtime subprocesses through `agent-manager.ts` and `src/runtimes/`.
 - **Agent system prompt**: `apps/bridge/src/system-prompt.ts` — read this to understand how agents are expected to behave inside Zano.
 - **CLI commands**: `packages/cli/src/index.ts` — single file, all `zano message …` and `zano task …` subcommands.
 - **Web routes**: `apps/web/src/app/(chat)` is the chat UI. `apps/web/src/app/api/bridge/connect/route.ts` is the bootstrap endpoint local bridges hit on startup.

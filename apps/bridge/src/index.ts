@@ -3,9 +3,6 @@
 import { hostname, platform, arch } from "os";
 import { Bridge } from "./bridge.js";
 
-// Default server URL (can be overridden)
-const DEFAULT_SERVER_URL = "https://zano.fehey.com";
-
 interface ConnectResponse {
   supabaseUrl: string;
   supabaseAnonKey: string;
@@ -18,6 +15,7 @@ interface ConnectResponse {
     name: string;
     display_name: string;
     description: string | null;
+    runtime?: string | null;
     model: string;
     status: string;
   }>;
@@ -25,7 +23,7 @@ interface ConnectResponse {
 
 function parseArgs(): { serverUrl: string; apiKey: string; agentsDir: string } {
   const args = process.argv.slice(2);
-  let serverUrl = DEFAULT_SERVER_URL;
+  let serverUrl = "";
   let apiKey = "";
   let agentsDir = "";
 
@@ -46,8 +44,8 @@ function parseArgs(): { serverUrl: string; apiKey: string; agentsDir: string } {
   Usage: zano-bridge [options]
 
   Options:
-    --api-key <key>        Machine API key (required, generate at ${DEFAULT_SERVER_URL})
-    --server-url <url>     Server URL (default: ${DEFAULT_SERVER_URL})
+    --api-key <key>        Machine API key (required)
+    --server-url <url>     Server URL (required)
     --agents-dir <path>    Agent workspaces directory (default: ~/.zano/agents)
     -h, --help             Show this help message
 `);
@@ -57,9 +55,6 @@ function parseArgs(): { serverUrl: string; apiKey: string; agentsDir: string } {
 
   // Also support env vars as fallback (for local dev)
   if (!apiKey) apiKey = process.env.ZANO_API_KEY || "";
-  if (!serverUrl || serverUrl === DEFAULT_SERVER_URL) {
-    serverUrl = process.env.ZANO_SERVER_URL || serverUrl;
-  }
 
   if (!agentsDir) {
     agentsDir = (process.env.ZANO_AGENTS_DIR || "~/.zano/agents").replace(
@@ -74,12 +69,22 @@ function parseArgs(): { serverUrl: string; apiKey: string; agentsDir: string } {
     console.error("  Generate one at your workspace settings page,");
     console.error("  then run:");
     console.error("");
-    console.error("    npx @fehey/zano-bridge --api-key zk_your_key_here");
+    console.error("    npx @dp4ng/x-bridge --api-key zk_your_key_here --server-url https://your-zano-server");
     console.error("");
     process.exit(1);
   }
 
-  return { serverUrl: serverUrl.replace(/\/+$/, ""), apiKey, agentsDir };
+  if (!serverUrl.trim()) {
+    console.error("  Error: --server-url is required.");
+    console.error("");
+    console.error("  Example:");
+    console.error("");
+    console.error("    npx @dp4ng/x-bridge --api-key zk_your_key_here --server-url https://your-zano-server");
+    console.error("");
+    process.exit(1);
+  }
+
+  return { serverUrl: serverUrl.trim().replace(/\/+$/, ""), apiKey, agentsDir };
 }
 
 async function authenticate(

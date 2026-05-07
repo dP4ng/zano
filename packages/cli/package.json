@@ -1,6 +1,6 @@
 {
-  "name": "@fehey/zano-cli",
-  "version": "0.1.0",
+  "name": "@dp4ng/x-cli",
+  "version": "0.1.1",
   "description": "Zano CLI — agent communication tool for Zano platform",
   "type": "module",
   "bin": {

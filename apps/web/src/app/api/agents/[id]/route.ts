@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  defaultModelForRuntime,
+  isValidModelForRuntime,
+  normalizeAgentRuntime,
+} from "@/lib/agent-runtime";
 
 // GET /api/agents/[id] — get a single agent
 export async function GET(
@@ -48,7 +53,7 @@ export async function PUT(
   // Verify ownership
   const { data: existing } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, runtime")
     .eq("id", id)
     .eq("owner_id", user.id)
     .single();
@@ -75,15 +80,22 @@ export async function PUT(
   if (body.system_prompt !== undefined) {
     updates.system_prompt = body.system_prompt?.trim() || null;
   }
+  const runtime = body.runtime !== undefined
+    ? normalizeAgentRuntime(body.runtime)
+    : normalizeAgentRuntime(existing.runtime);
+  if (body.runtime !== undefined) {
+    updates.runtime = runtime;
+  }
   if (body.model !== undefined) {
-    const validModels = ["opus", "sonnet", "haiku"];
-    if (!validModels.includes(body.model)) {
+    if (!isValidModelForRuntime(runtime, body.model)) {
       return NextResponse.json(
-        { error: "model must be one of: opus, sonnet, haiku" },
+        { error: "model is not valid for the selected runtime" },
         { status: 400 }
       );
     }
     updates.model = body.model;
+  } else if (body.runtime !== undefined) {
+    updates.model = defaultModelForRuntime(runtime);
   }
 
   const { data: agent, error } = await supabase

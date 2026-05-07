@@ -46,7 +46,8 @@ export function MachineDetailDialog({
   const nameChanged = name.trim() !== machine.name;
 
   const apiKeyDisplay = keyValue || `${machine.key_prefix}...`;
-  const npxCommand = `npx @fehey/zano-bridge --api-key ${apiKeyDisplay}`;
+  const serverUrl = process.env.NEXT_PUBLIC_ZANO_SERVER_URL || "<your-zano-server-url>";
+  const npxCommand = `npx @dp4ng/x-bridge --api-key ${apiKeyDisplay} --server-url ${serverUrl}`;
 
   async function handleSaveName() {
     if (!nameChanged) return;

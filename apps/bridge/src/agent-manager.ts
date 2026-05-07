@@ -5,6 +5,16 @@ import { createRequire } from "node:module";
 import { spawn, ChildProcess } from "child_process";
 import { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { loadLocalRuntimeEnv } from "./runtime-env.js";
+import {
+  defaultModelForRuntime,
+  getRuntimeDriver,
+  isKnownModelForRuntime,
+  normalizeRuntime,
+  type ParsedRuntimeEvent,
+  type RuntimeDriver,
+  type RuntimeId,
+} from "./runtimes/index.js";
 
 type AgentActivity = "idle" | "thinking" | "working" | "error";
 
@@ -19,7 +29,8 @@ interface AgentRecord {
   display_name: string;
   description: string | null;
   system_prompt: string | null;
-  model: string;
+  runtime?: string | null;
+  model: string | null;
   status: string;
 }
 
@@ -38,7 +49,10 @@ interface QueuedMessage {
 
 interface AgentProcess {
   proc: ChildProcess;
+  driver: RuntimeDriver;
+  runtime: RuntimeId;
   sessionId: string | null;
+  currentTurnId: string | null;
   busy: boolean;
   stdoutBuffer: string;
   activity: AgentActivity;
@@ -50,6 +64,11 @@ interface AgentProcess {
   pendingText: string;
 }
 
+interface CliTransport {
+  zanoDir: string;
+  tokenFilePath: string | null;
+}
+
 export class AgentManager {
   private sessions = new Map<string, AgentSession>();
   private processes = new Map<string, AgentProcess>();
@@ -58,6 +77,7 @@ export class AgentManager {
   private supabaseUrl: string;
   private supabaseKey: string;
   private authToken: string;
+  private serverId: string;
   private activityChannel: RealtimeChannel;
 
   constructor(
@@ -65,13 +85,15 @@ export class AgentManager {
     supabase: SupabaseClient,
     supabaseUrl: string,
     supabaseKey: string,
-    authToken: string = ""
+    authToken: string = "",
+    serverId: string = ""
   ) {
     this.agentsDir = agentsDir;
     this.supabase = supabase;
     this.supabaseUrl = supabaseUrl;
     this.supabaseKey = supabaseKey;
     this.authToken = authToken;
+    this.serverId = serverId;
 
     if (!existsSync(agentsDir)) {
       mkdirSync(agentsDir, { recursive: true });
@@ -298,27 +320,48 @@ ${agent.description || agent.display_name}
     }
 
     const systemPrompt = buildSystemPrompt(agent, memoryContext);
+    const runtime = normalizeRuntime(agent?.runtime);
+    const model = isKnownModelForRuntime(runtime, agent?.model)
+      ? agent.model
+      : defaultModelForRuntime(runtime);
 
     // Ensure a persistent process is running
     let agentProc = this.processes.get(agentId);
     if (!agentProc || agentProc.proc.killed || agentProc.proc.exitCode !== null) {
-      agentProc = await this.spawnProcess(agentId, session, systemPrompt, agent?.model || "opus");
+      agentProc = await this.spawnProcess(
+        agentId,
+        session,
+        systemPrompt,
+        runtime,
+        model
+      );
       this.processes.set(agentId, agentProc);
     }
 
-    // If the agent is busy, queue the message and wait
-    if (agentProc.busy) {
-      const displayName = session.displayName;
-      console.log(
-        `  [${displayName}] Agent busy, queueing message (${userMessage.length} chars, queue size: ${agentProc.messageQueue.length + 1})...`
-      );
-      return new Promise<void>((resolve, reject) => {
-        agentProc!.messageQueue.push({ userMessage, resolve, reject });
-      });
+    if (
+      (agentProc.driver.requiresSessionBeforeInput && !agentProc.sessionId) ||
+      (agentProc.busy && !agentProc.driver.supportsSteer)
+    ) {
+      return this.queueMessage(agentProc, session, userMessage);
     }
 
     // Send immediately
-    this.deliverMessage(agentId, agentProc, session, userMessage);
+    if (!this.deliverMessage(agentId, agentProc, session, userMessage)) {
+      return this.queueMessage(agentProc, session, userMessage);
+    }
+  }
+
+  private queueMessage(
+    agentProc: AgentProcess,
+    session: AgentSession,
+    userMessage: string
+  ): Promise<void> {
+    console.log(
+      `  [${session.displayName}] Agent busy or starting, queueing message (${userMessage.length} chars, queue size: ${agentProc.messageQueue.length + 1})...`
+    );
+    return new Promise<void>((resolve, reject) => {
+      agentProc.messageQueue.push({ userMessage, resolve, reject });
+    });
   }
 
   /** Write a message to the agent's stdin and mark it as busy */
@@ -327,24 +370,23 @@ ${agent.description || agent.display_name}
     agentProc: AgentProcess,
     session: AgentSession,
     userMessage: string
-  ) {
-    agentProc.busy = true;
-
-    const stdinMsg = JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: [{ type: "text", text: userMessage }],
-      },
-      ...(agentProc.sessionId ? { session_id: agentProc.sessionId } : {}),
+  ): boolean {
+    const stdinMsg = agentProc.driver.encodeUserMessage({
+      userMessage,
+      sessionId: agentProc.sessionId,
+      turnId: agentProc.currentTurnId,
+      busy: agentProc.busy,
     });
+    if (!stdinMsg) return false;
 
     const displayName = session.displayName;
     console.log(
-      `  [${displayName}] Forwarding message (${userMessage.length} chars)...`
+      `  [${displayName}] Forwarding message to ${agentProc.driver.displayName} (${userMessage.length} chars)...`
     );
+    agentProc.busy = true;
     this.broadcastActivity(agentId, "working", "Working", "Message received");
     agentProc.proc.stdin?.write(stdinMsg + "\n");
+    return true;
   }
 
   /** Process the next queued message, if any */
@@ -357,9 +399,12 @@ ${agent.description || agent.display_name}
       console.log(
         `  [${session.displayName}] Draining queue (${agentProc.messageQueue.length} remaining)...`
       );
-      this.deliverMessage(agentId, agentProc, session, next.userMessage);
-      // Resolve the queued promise — message has been delivered
-      next.resolve();
+      if (this.deliverMessage(agentId, agentProc, session, next.userMessage)) {
+        // Resolve the queued promise — message has been delivered
+        next.resolve();
+      } else {
+        agentProc.messageQueue.unshift(next);
+      }
     }
   }
 
@@ -408,13 +453,18 @@ ${agent.description || agent.display_name}
     }
 
     const systemPrompt = buildSystemPrompt(agent, memoryContext);
+    const runtime = normalizeRuntime(agent?.runtime);
+    const model = isKnownModelForRuntime(runtime, agent?.model)
+      ? agent.model
+      : defaultModelForRuntime(runtime);
 
     // Spawn new process — will resume the session via saved sessionId
     const newProc = await this.spawnProcess(
       agentId,
       session,
       systemPrompt,
-      agent?.model || "opus"
+      runtime,
+      model
     );
 
     // Restore pending queue
@@ -430,9 +480,9 @@ ${agent.description || agent.display_name}
   /**
    * Set up CLI transport for the agent — writes a bash wrapper script
    * and env config into .zano/ directory in agent workspace.
-   * Returns the .zano/ directory path (to prepend to PATH).
+   * Returns the .zano/ directory path (to prepend to PATH) and auth token file.
    */
-  private prepareCliTransport(agentId: string, session: AgentSession): string {
+  private prepareCliTransport(agentId: string, session: AgentSession): CliTransport {
     const zanoDir = join(session.workDir, ".zano");
     if (!existsSync(zanoDir)) {
       mkdirSync(zanoDir, { recursive: true });
@@ -441,10 +491,10 @@ ${agent.description || agent.display_name}
     const wrapperPath = join(zanoDir, "zano");
     let wrapperBody: string;
 
-    // Try to resolve the compiled CLI from @fehey/zano-cli npm package first
+    // Try to resolve the compiled CLI from the published x-cli package first
     try {
       const req = createRequire(import.meta.url);
-      const cliPath = req.resolve("@fehey/zano-cli/dist/index.js");
+      const cliPath = req.resolve("@dp4ng/x-cli/dist/index.js");
       // Published mode: use node to run compiled JS directly
       wrapperBody = `#!/usr/bin/env bash\nexec node '${cliPath.replace(/'/g, "'\\''")}' "$@"\n`;
       console.log(`  [${session.displayName}] CLI resolved from npm package: ${cliPath}`);
@@ -459,64 +509,90 @@ ${agent.description || agent.display_name}
 
     writeFileSync(wrapperPath, wrapperBody, { mode: 0o755 });
     console.log(`  [${session.displayName}] CLI wrapper written: ${wrapperPath}`);
-    return zanoDir;
+
+    const tokenFilePath = this.authToken ? join(zanoDir, "agent-token") : null;
+    if (tokenFilePath) {
+      writeFileSync(tokenFilePath, this.authToken, { mode: 0o600 });
+    }
+
+    return { zanoDir, tokenFilePath };
+  }
+
+  private buildAgentEnv(
+    agentId: string,
+    transport: CliTransport,
+    runtime: RuntimeId
+  ): NodeJS.ProcessEnv {
+    const runtimeEnv = loadLocalRuntimeEnv({
+      serverId: this.serverId,
+      agentId,
+      runtime,
+    });
+
+    return {
+      ...process.env,
+      ...runtimeEnv,
+      FORCE_COLOR: "0",
+      NO_COLOR: "1",
+      // CLI injection: agent identity + Supabase credentials
+      ZANO_AGENT_ID: agentId,
+      ZANO_SUPABASE_URL: this.supabaseUrl,
+      ZANO_SUPABASE_KEY: this.supabaseKey,
+      ...(this.authToken ? { ZANO_AUTH_TOKEN: this.authToken } : {}),
+      ...(transport.tokenFilePath
+        ? { ZANO_AUTH_TOKEN_FILE: transport.tokenFilePath }
+        : {}),
+      // Prepend .zano/ to PATH so `zano` command is available
+      PATH: `${transport.zanoDir}:${process.env.PATH ?? ""}`,
+    };
   }
 
   private async spawnProcess(
     agentId: string,
     session: AgentSession,
     systemPrompt: string,
-    model: string = "opus"
+    runtime: RuntimeId,
+    model: string
   ): Promise<AgentProcess> {
     // Prepare CLI transport (.zano/ wrapper + env vars)
-    const zanoDir = this.prepareCliTransport(agentId, session);
-
-    const args = [
-      "--output-format",
-      "stream-json",
-      "--input-format",
-      "stream-json",
-      "--verbose",
-      "--append-system-prompt",
-      systemPrompt,
-      "--permission-mode",
-      "bypassPermissions",
-      "--model",
-      model,
-    ];
+    const transport = this.prepareCliTransport(agentId, session);
+    const driver = getRuntimeDriver(runtime);
 
     // Resume previous session: check in-memory first, then Supabase
     const prevProc = this.processes.get(agentId);
     const sessionId =
       prevProc?.sessionId || (await this.loadSessionId(agentId));
-    if (sessionId) {
-      args.push("--resume", sessionId);
+    const launch = driver.buildLaunch({
+      agentId,
+      displayName: session.displayName,
+      workDir: session.workDir,
+      systemPrompt,
+      model,
+      sessionId,
+      zanoDir: transport.zanoDir,
+      env: this.buildAgentEnv(agentId, transport, runtime),
+    });
+
+    if (launch.sessionId && launch.sessionId !== sessionId) {
+      await this.saveSessionId(agentId, launch.sessionId);
     }
 
     console.log(
-      `  [${session.displayName}] Spawning Claude Code (stream-json + CLI, ${sessionId ? `resume: ${sessionId.substring(0, 8)}` : "new session"})...`
+      `  [${session.displayName}] Spawning ${driver.displayName} (${sessionId ? `resume: ${sessionId.substring(0, 8)}` : "new session"}, model: ${model})...`
     );
 
-    const proc = spawn("claude", args, {
-      cwd: session.workDir,
-      env: {
-        ...process.env,
-        FORCE_COLOR: "0",
-        NO_COLOR: "1",
-        // CLI injection: agent identity + Supabase credentials
-        ZANO_AGENT_ID: agentId,
-        ZANO_SUPABASE_URL: this.supabaseUrl,
-        ZANO_SUPABASE_KEY: this.supabaseKey,
-        ZANO_AUTH_TOKEN: this.authToken,
-        // Prepend .zano/ to PATH so `zano` command is available
-        PATH: `${zanoDir}:${process.env.PATH ?? ""}`,
-      },
+    const proc = spawn(launch.command, launch.args, {
+      cwd: launch.cwd,
+      env: launch.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
     const agentProc: AgentProcess = {
       proc,
-      sessionId: prevProc?.sessionId || null,
+      driver,
+      runtime,
+      sessionId: launch.sessionId || prevProc?.sessionId || null,
+      currentTurnId: null,
       busy: false,
       stdoutBuffer: "",
       activity: "working",
@@ -567,6 +643,10 @@ ${agent.description || agent.display_name}
       agentProc.messageQueue = [];
     });
 
+    for (const input of launch.initialInput) {
+      proc.stdin?.write(input + "\n");
+    }
+
     return agentProc;
   }
 
@@ -575,29 +655,69 @@ ${agent.description || agent.display_name}
     agentProc: AgentProcess,
     line: string
   ) {
-    let event: any;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      return; // Ignore non-JSON lines
+    const events = agentProc.driver.parseLine(line);
+    for (const event of events) {
+      this.handleRuntimeEvent(agentId, agentProc, event);
     }
+  }
 
+  private handleRuntimeEvent(
+    agentId: string,
+    agentProc: AgentProcess,
+    event: ParsedRuntimeEvent
+  ) {
     const session = this.sessions.get(agentId);
     const displayName = session?.displayName || agentId;
 
     switch (event.type) {
-      case "system":
-        if (event.subtype === "init" && event.session_id) {
-          agentProc.sessionId = event.session_id;
-          this.saveSessionId(agentId, event.session_id);
-          console.log(
-            `  [${displayName}] Session initialized: ${event.session_id.substring(0, 8)}...`
-          );
+      case "session_init":
+        agentProc.sessionId = event.sessionId;
+        this.saveSessionId(agentId, event.sessionId);
+        console.log(
+          `  [${displayName}] Session initialized: ${event.sessionId.substring(0, 8)}...`
+        );
+        if (!agentProc.busy) {
+          this.drainQueue(agentId, agentProc);
         }
-        if (event.subtype === "compacting") {
-          this.flushPendingText(agentId, agentProc);
-          this.broadcastActivity(agentId, "working", "Optimizing context", "");
-          // Restart the process to pick up fresh MEMORY.md in system prompt
+        break;
+
+      case "turn_started":
+        agentProc.currentTurnId = event.turnId;
+        agentProc.busy = true;
+        break;
+
+      case "thinking":
+        this.flushPendingText(agentId, agentProc);
+        this.broadcastActivity(
+          agentId,
+          "thinking",
+          "Thinking",
+          event.text || ""
+        );
+        break;
+
+      case "text":
+        agentProc.pendingText += event.text || "";
+        break;
+
+      case "tool_call": {
+        this.flushPendingText(agentId, agentProc);
+        const { label, detail } =
+          event.label || event.detail
+            ? { label: event.label || `Running ${event.name}`, detail: event.detail || "" }
+            : this.describeToolUse({
+                name: event.name,
+                input: event.input || {},
+              });
+        this.broadcastActivity(agentId, "working", label, detail);
+        break;
+      }
+
+      case "compaction_started":
+        this.flushPendingText(agentId, agentProc);
+        this.broadcastActivity(agentId, "working", "Optimizing context", "");
+        if (agentProc.runtime === "claude") {
+          // Restart Claude after compaction to pick up fresh MEMORY.md in the system prompt.
           console.log(
             `  [${displayName}] Context compaction detected — scheduling process restart for fresh MEMORY.md...`
           );
@@ -609,47 +729,38 @@ ${agent.description || agent.display_name}
         }
         break;
 
-      case "assistant": {
-        // Claude Code stream-json nests content inside event.message.content[]
-        // Each assistant event contains one content block in the array.
-        const contentBlock = event.message?.content?.[0];
-        if (!contentBlock) break;
-
-        const blockType = contentBlock.type;
-
-        if (blockType === "thinking") {
-          // Flush any accumulated text before switching to thinking
-          this.flushPendingText(agentId, agentProc);
-          this.broadcastActivity(agentId, "thinking", "Thinking", "");
-        } else if (blockType === "text") {
-          // Store latest text output — will be flushed when next non-text event arrives
-          agentProc.pendingText = contentBlock.text || "";
-        } else if (blockType === "tool_use") {
-          // Flush accumulated text first
-          this.flushPendingText(agentId, agentProc);
-          // Map tool to human-readable label + detail
-          const { label, detail } = this.describeToolUse(contentBlock);
-          this.broadcastActivity(agentId, "working", label, detail);
-        }
+      case "compaction_finished":
+        this.broadcastActivity(agentId, "working", "Context optimized", "");
         break;
-      }
 
-      case "result": {
+      case "turn_end":
         // Flush any final text
         this.flushPendingText(agentId, agentProc);
         // Turn is complete — save session ID
-        if (event.session_id) {
-          agentProc.sessionId = event.session_id;
-          this.saveSessionId(agentId, event.session_id);
+        if (event.sessionId) {
+          agentProc.sessionId = event.sessionId;
+          this.saveSessionId(agentId, event.sessionId);
         }
         agentProc.busy = false;
+        agentProc.currentTurnId = null;
         this.broadcastActivity(agentId, "idle", "Idle", "");
         console.log(`  [${displayName}] Turn complete.`);
 
         // Process next queued message if any
         this.drainQueue(agentId, agentProc);
         break;
-      }
+
+      case "error":
+        this.flushPendingText(agentId, agentProc);
+        this.broadcastActivity(agentId, "error", "Runtime error", event.message);
+        console.error(`  [${displayName}] Runtime error: ${event.message}`);
+        if (!agentProc.sessionId) {
+          for (const queued of agentProc.messageQueue) {
+            queued.reject(new Error(event.message));
+          }
+          agentProc.messageQueue = [];
+        }
+        break;
     }
   }
 

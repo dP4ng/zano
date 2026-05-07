@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  defaultModelForRuntime,
+  isValidModelForRuntime,
+  normalizeAgentRuntime,
+} from "@/lib/agent-runtime";
 
 // GET /api/agents — list user's agents
 export async function GET() {
@@ -37,7 +42,14 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { display_name, description, system_prompt, model, server_id } = body;
+  const {
+    display_name,
+    description,
+    system_prompt,
+    runtime: rawRuntime,
+    model,
+    server_id,
+  } = body;
 
   if (!display_name?.trim()) {
     return NextResponse.json(
@@ -56,9 +68,10 @@ export async function POST(request: NextRequest) {
   const name = `${baseName}-${user.id.substring(0, 8)}-${randomSuffix}`;
 
   // 1. Create the agent
-  // Validate model if provided
-  const validModels = ["opus", "sonnet", "haiku"];
-  const agentModel = model && validModels.includes(model) ? model : "opus";
+  const runtime = normalizeAgentRuntime(rawRuntime);
+  const agentModel = isValidModelForRuntime(runtime, model)
+    ? model
+    : defaultModelForRuntime(runtime);
 
   if (!server_id) {
     return NextResponse.json(
@@ -74,6 +87,7 @@ export async function POST(request: NextRequest) {
       display_name: display_name.trim(),
       description: description?.trim() || null,
       system_prompt: system_prompt?.trim() || null,
+      runtime,
       model: agentModel,
       status: "offline",
       owner_id: user.id,

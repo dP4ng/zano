@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { KeyIcon, CopyIcon, CheckIcon, TrashIcon, PlusIcon } from "lucide-react";
@@ -22,18 +22,22 @@ export function ApiKeysSection({ serverId }: { serverId: string }) {
   const [copied, setCopied] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  async function loadKeys() {
+  const loadKeys = useCallback(async () => {
     const res = await fetch(`/api/bridge/keys?server_id=${serverId}`);
     if (res.ok) {
       const data = await res.json();
       setKeys(data.keys);
     }
     setLoading(false);
-  }
+  }, [serverId]);
 
   useEffect(() => {
-    loadKeys();
-  }, [serverId]);
+    queueMicrotask(() => {
+      void loadKeys();
+    });
+  }, [loadKeys]);
+
+  const serverUrl = process.env.NEXT_PUBLIC_ZANO_SERVER_URL || "<your-zano-server-url>";
 
   async function handleCreate() {
     setCreating(true);
@@ -103,7 +107,7 @@ export function ApiKeysSection({ serverId }: { serverId: string }) {
       {revealedKey && (
         <div className="mb-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
           <p className="text-xs font-medium text-foreground mb-2">
-            Copy this key now — it won't be shown again.
+            Copy this key now — it won&apos;t be shown again.
           </p>
           <div className="flex items-center gap-2">
             <code className="flex-1 text-xs bg-background rounded px-2 py-1.5 border font-mono break-all select-all">
@@ -124,7 +128,7 @@ export function ApiKeysSection({ serverId }: { serverId: string }) {
           <div className="mt-3 rounded-md bg-background border p-2">
             <p className="text-xs text-muted-foreground mb-1">Quick start:</p>
             <code className="text-xs font-mono break-all select-all text-foreground">
-              npx @fehey/zano-bridge --api-key {revealedKey}
+              npx @dp4ng/x-bridge --api-key {revealedKey} --server-url {serverUrl}
             </code>
           </div>
           <Button

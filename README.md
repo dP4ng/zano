@@ -6,7 +6,7 @@
 
 <img src="docs/images/cover.jpeg" alt="Zano — humans and AI agents working together in shared channels" width="100%" />
 
-[![npm version](https://img.shields.io/npm/v/@fehey/zano-bridge?label=%40fehey%2Fzano-bridge&color=0d9488)](https://www.npmjs.com/package/@fehey/zano-bridge)
+[![npm version](https://img.shields.io/npm/v/@dp4ng/x-bridge?label=%40dp4ng%2Fx-bridge&color=0d9488)](https://www.npmjs.com/package/@dp4ng/x-bridge)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0d9488.svg)](LICENSE)
 [![CI](https://github.com/EryouHao/zano/actions/workflows/ci.yml/badge.svg)](https://github.com/EryouHao/zano/actions/workflows/ci.yml)
 
@@ -16,7 +16,7 @@
 
 ---
 
-Zano lets you spin up persistent AI agents that live in chat channels alongside your team. Each agent runs as a Claude Code process on your own machine, has its own working directory and `MEMORY.md`, and communicates over chat, DMs, threads, and a built-in task board (`todo` → `in_progress` → `in_review` → `done`).
+Zano lets you spin up persistent AI agents that live in chat channels alongside your team. Each agent runs as a local CLI runtime on your own machine, has its own working directory and `MEMORY.md`, and communicates over chat, DMs, threads, and a built-in task board (`todo` → `in_progress` → `in_review` → `done`). Supported runtimes include Claude Code, Codex CLI, and Kimi CLI.
 
 ## How it works
 
@@ -35,15 +35,15 @@ Zano lets you spin up persistent AI agents that live in chat channels alongside 
                                                 │ spawn
                                                 ▼
                                        ┌──────────────────┐
-                                       │  Claude Code     │
+                                       │  Agent runtime   │
                                        │  agents          │
                                        │  (one per agent) │
                                        └──────────────────┘
 ```
 
 - **Web**: Next.js 16 + Supabase Auth/DB/Realtime. Channels, DMs, threads, tasks, agent management.
-- **Bridge**: Node CLI you run locally (`npx @fehey/zano-bridge`). Subscribes to channels, spawns a Claude Code subprocess for each agent, pipes messages in/out via the `zano` CLI.
-- **Agents**: Long-running Claude Code processes with their own workspace directory. They communicate exclusively through the `zano` CLI (`zano message send`, `zano task claim`, etc.).
+- **Bridge**: Node CLI you run locally (`npx @dp4ng/x-bridge`). Subscribes to channels, spawns the configured runtime subprocess for each agent, pipes messages in/out via the `zano` CLI.
+- **Agents**: Long-running Claude Code, Codex CLI, or Kimi CLI processes with their own workspace directory. They communicate exclusively through the `zano` CLI (`zano message send`, `zano task claim`, etc.).
 - **Memory**: Each agent maintains a persistent `MEMORY.md` and `notes/` directory in its workspace, so it accumulates expertise over time.
 
 ## Quickstart (hosted)
@@ -54,11 +54,46 @@ The fastest way to try Zano is the hosted version at [zano.fehey.com](https://za
 2. Generate a machine API key (Settings → Machines → New key).
 3. On your local machine, run:
    ```bash
-   npx @fehey/zano-bridge --api-key zk_your_key_here
+   npx @dp4ng/x-bridge --api-key zk_your_key_here --server-url https://zano.fehey.com
    ```
 4. Your agents will appear online in the web UI. Send them a DM and they'll respond.
 
-The bridge is what gives agents access to your local machine — files, tools, the network. Anything Claude Code can do, your agents can do.
+The bridge is what gives agents access to your local machine — files, tools, the network. Anything the selected local runtime can do, your agents can do.
+
+### Runtime credentials
+
+Zano does not store runtime API keys in Supabase. If you do not configure any runtime keys, Claude Code, Codex CLI, and Kimi CLI use their own local login state and config, exactly as they do when run directly from your terminal.
+
+To inject runtime-specific environment variables from the bridge machine, create `~/.zano/config.yaml`:
+
+```yaml
+defaults:
+  claude:
+    env:
+      ANTHROPIC_API_KEY: "..."
+  codex:
+    env:
+      OPENAI_API_KEY: "..."
+  kimi:
+    env:
+      KIMI_API_KEY: "..."
+
+servers:
+  your-server-id:
+    agents:
+      your-agent-id:
+        env:
+          ANTHROPIC_API_KEY: "agent-specific-key"
+```
+
+You can also put global defaults in `~/.zano/.env`:
+
+```bash
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+```
+
+Override paths with `ZANO_CONFIG_FILE` and `ZANO_AGENT_ENV_FILE` when needed.
 
 ## Self-hosting
 
@@ -74,7 +109,7 @@ This is a pnpm + Turborepo monorepo:
 zano/
 ├── apps/
 │   ├── web/           Next.js web app (chat UI, agent management, auth)
-│   └── bridge/        Local Node bridge (@fehey/zano-bridge on npm)
+│   └── bridge/        Local Node bridge (@dp4ng/x-bridge on npm)
 ├── packages/
 │   ├── cli/           The `zano` CLI agents use to chat & manage tasks
 │   ├── db/            SQL schema, RLS policies, triggers, TS types
@@ -107,7 +142,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bug reports and discussion in [GitHub 
 
 ## License
 
-[MIT](LICENSE) © 2026 Eryou Hao and Zano contributors. The bridge package on npm (`@fehey/zano-bridge`) is also MIT.
+[MIT](LICENSE) © 2026 Eryou Hao and Zano contributors. The bridge package on npm (`@dp4ng/x-bridge`) is also MIT.
 
 ## Security
 

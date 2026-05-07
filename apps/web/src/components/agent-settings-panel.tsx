@@ -26,9 +26,15 @@ import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogPopup, DialogHeader, DialogTitle, DialogPanel } from '@/components/ui/dialog';
+import {
+  MODEL_ITEMS_BY_RUNTIME,
+  RUNTIME_ITEMS,
+  defaultModelForRuntime,
+  normalizeAgentRuntime,
+  type AgentRuntime,
+} from '@/lib/agent-runtime';
 
 interface AgentInfo {
   id: string;
@@ -43,6 +49,7 @@ interface AgentFull {
   display_name: string;
   description: string | null;
   system_prompt: string | null;
+  runtime: AgentRuntime | null;
   model: string;
   status: string;
 }
@@ -58,12 +65,6 @@ interface FileEntry {
   size: number;
   modified: string;
 }
-
-const MODEL_ITEMS = [
-  { value: 'opus', label: 'Opus' },
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'haiku', label: 'Haiku' },
-];
 
 type BridgeRpcFn = (action: string, extra?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -178,6 +179,7 @@ function SettingsTab({
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
+  const [runtime, setRuntime] = useState<AgentRuntime>('claude');
   const [model, setModel] = useState('opus');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -188,11 +190,6 @@ function SettingsTab({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
   const supabase = createClient();
-
-  useEffect(() => {
-    loadAgent();
-    loadSkills();
-  }, [agent.id]);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -207,9 +204,11 @@ function SettingsTab({
 
     if (data) {
       const a = data as AgentFull;
+      const nextRuntime = normalizeAgentRuntime(a.runtime);
       setDisplayName(a.display_name);
       setDescription(a.description || '');
-      setModel(a.model || 'opus');
+      setRuntime(nextRuntime);
+      setModel(a.model || defaultModelForRuntime(nextRuntime));
       setSystemPrompt(a.system_prompt || '');
     }
     setLoading(false);
@@ -242,6 +241,13 @@ function SettingsTab({
     }
   }
 
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadAgent();
+      void loadSkills();
+    });
+  }, [agent.id]);
+
   async function handleSave() {
     if (!displayName.trim()) return;
     setSaving(true);
@@ -255,6 +261,7 @@ function SettingsTab({
         body: JSON.stringify({
           display_name: displayName.trim(),
           description: description.trim() || null,
+          runtime,
           model,
           system_prompt: systemPrompt.trim() || null,
         }),
@@ -332,7 +339,9 @@ function SettingsTab({
     }
   }
 
-  const selectedModel = MODEL_ITEMS.find((m) => m.value === model) ?? MODEL_ITEMS[0];
+  const modelItems = MODEL_ITEMS_BY_RUNTIME[runtime];
+  const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === runtime) ?? RUNTIME_ITEMS[0];
+  const selectedModel = modelItems.find((m) => m.value === model) ?? modelItems[0];
 
   if (loading) {
     return (
@@ -375,10 +384,26 @@ function SettingsTab({
         <div className="rounded-lg border p-3 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Runtime</span>
-            <span className="text-xs font-medium flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-              Claude Code
-            </span>
+            <Select
+              value={selectedRuntime}
+              onValueChange={(val) => {
+                if (!val) return;
+                const nextRuntime = (val as typeof selectedRuntime).value;
+                setRuntime(nextRuntime);
+                setModel(defaultModelForRuntime(nextRuntime));
+              }}
+              items={RUNTIME_ITEMS}>
+              <SelectTrigger size="sm" className="w-auto min-w-32">
+                <SelectValue placeholder="Select runtime" />
+              </SelectTrigger>
+              <SelectPopup>
+                {RUNTIME_ITEMS.map((item) => (
+                  <SelectItem key={item.value} value={item}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           </div>
           <Separator />
           <div className="flex items-center justify-between">
@@ -388,12 +413,12 @@ function SettingsTab({
               onValueChange={(val) => {
                 if (val) setModel((val as typeof selectedModel).value);
               }}
-              items={MODEL_ITEMS}>
+              items={modelItems}>
               <SelectTrigger size="sm" className="w-auto min-w-24">
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectPopup>
-                {MODEL_ITEMS.map((item) => (
+                {modelItems.map((item) => (
                   <SelectItem key={item.value} value={item}>
                     {item.label}
                   </SelectItem>

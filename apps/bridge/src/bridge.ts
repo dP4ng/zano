@@ -31,6 +31,7 @@ interface DbAgent {
   name: string;
   display_name: string;
   description: string | null;
+  runtime?: string | null;
   system_prompt: string | null;
   model: string;
   status: string;
@@ -76,7 +77,8 @@ export class Bridge {
       this.supabase,
       config.supabaseUrl,
       config.supabaseKey,
-      config.authToken
+      config.authToken,
+      config.serverId
     );
   }
 

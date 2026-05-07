@@ -34,11 +34,20 @@ import { join } from "path";
 const AGENT_ID = process.env.ZANO_AGENT_ID;
 const SUPABASE_URL = process.env.ZANO_SUPABASE_URL;
 const SUPABASE_KEY = process.env.ZANO_SUPABASE_KEY;
-const AUTH_TOKEN = process.env.ZANO_AUTH_TOKEN;
+const AUTH_TOKEN = readAuthToken();
 
 function fail(code: string, message: string): never {
   process.stderr.write(JSON.stringify({ ok: false, code, message }) + "\n");
   process.exit(1);
+}
+
+function readAuthToken(): string | undefined {
+  const tokenFile = process.env.ZANO_AUTH_TOKEN_FILE;
+  if (tokenFile && existsSync(tokenFile)) {
+    const token = readFileSync(tokenFile, "utf-8").trim();
+    if (token) return token;
+  }
+  return process.env.ZANO_AUTH_TOKEN;
 }
 
 if (!AGENT_ID) fail("MISSING_AGENT_ID", "ZANO_AGENT_ID is not set");
@@ -889,7 +898,7 @@ async function main() {
       return cmdTaskUpdate(flags);
 
     default:
-      console.log(`Zano CLI v0.1.0
+      console.log(`Zano CLI v0.1.1
 
 Usage:
   zano message send --target "#channel"    Send a message (content via stdin)
