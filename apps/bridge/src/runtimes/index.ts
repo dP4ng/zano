@@ -11,6 +11,7 @@ export interface RuntimeLaunchContext {
   workDir: string;
   systemPrompt: string;
   model: string;
+  reasoningEffort: string | null;
   sessionId: string | null;
   zanoDir: string;
   env: NodeJS.ProcessEnv;
@@ -76,8 +77,23 @@ export function defaultModelForRuntime(runtime: RuntimeId): string {
 export function isKnownModelForRuntime(runtime: RuntimeId, model: unknown): model is string {
   if (typeof model !== "string" || !model.trim()) return false;
   if (runtime === "claude") return ["opus", "sonnet", "haiku"].includes(model);
-  if (runtime === "kimi") return true;
+  if (runtime === "kimi") return model === "default";
   return true;
+}
+
+export function defaultReasoningEffortForRuntime(runtime: RuntimeId): string | null {
+  return runtime === "codex" ? "medium" : null;
+}
+
+export function isKnownReasoningEffortForRuntime(
+  runtime: RuntimeId,
+  value: unknown
+): value is string {
+  return (
+    runtime === "codex" &&
+    typeof value === "string" &&
+    ["low", "medium", "high", "xhigh"].includes(value)
+  );
 }
 
 export function getRuntimeDriver(runtime: RuntimeId): RuntimeDriver {
@@ -224,6 +240,9 @@ const codexDriver: RuntimeDriver = {
       sandbox: "danger-full-access",
       developerInstructions: ctx.systemPrompt,
       ...(ctx.model ? { model: ctx.model } : {}),
+      ...(ctx.reasoningEffort
+        ? { config: { model_reasoning_effort: ctx.reasoningEffort } }
+        : {}),
     };
 
     return {

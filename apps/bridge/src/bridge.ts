@@ -34,6 +34,7 @@ interface DbAgent {
   runtime?: string | null;
   system_prompt: string | null;
   model: string;
+  reasoning_effort?: string | null;
   status: string;
 }
 
@@ -434,6 +435,26 @@ export class Bridge {
       .on(
         "postgres_changes",
         {
+          event: "DELETE",
+          schema: "public",
+          table: "agents",
+        },
+        (payload) => {
+          const deleted = payload.old as { id?: string };
+          if (!deleted.id || !this.agentRecords.has(deleted.id)) return;
+
+          console.log(`  [Bridge] Agent deleted: ${deleted.id}`);
+          this.agentManager.stopAgent(deleted.id);
+          this.agentRecords.delete(deleted.id);
+          for (const agents of this.channelAgents.values()) {
+            agents.delete(deleted.id);
+          }
+          this.updatePresence();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
           event: "INSERT",
           schema: "public",
           table: "channel_members",
@@ -466,6 +487,28 @@ export class Bridge {
               this.channelTypes.set(member.channel_id, ch.type);
               this.channelNames.set(member.channel_id, ch.name);
             }
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "channel_members",
+        },
+        (payload) => {
+          const member = payload.old as Partial<DbChannelMember>;
+          if (!member.member_id || !member.channel_id) {
+            return;
+          }
+          if (!this.agentRecords.has(member.member_id)) return;
+
+          this.channelAgents.get(member.channel_id)?.delete(member.member_id);
+          if (this.channelAgents.get(member.channel_id)?.size === 0) {
+            this.channelAgents.delete(member.channel_id);
+            this.channelTypes.delete(member.channel_id);
+            this.channelNames.delete(member.channel_id);
           }
         }
       )

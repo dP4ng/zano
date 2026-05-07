@@ -46,6 +46,7 @@ create table public.agents (
   system_prompt text,
   runtime text default 'claude' not null check (runtime in ('claude', 'codex', 'kimi')),
   model text default 'opus' not null,
+  reasoning_effort text check (reasoning_effort is null or reasoning_effort in ('low', 'medium', 'high', 'xhigh')),
   status text default 'offline' check (status in ('online', 'sleeping', 'offline')),
   session_id text,
   workspace_path text,
@@ -53,6 +54,15 @@ create table public.agents (
   server_id uuid references public.servers(id) on delete cascade not null,
   created_at timestamptz default now() not null,
   unique(server_id, name)
+);
+
+-- Owner-only runtime settings. Keep env vars out of public.agents because
+-- agents are intentionally broadly readable.
+create table public.agent_runtime_settings (
+  agent_id uuid references public.agents(id) on delete cascade primary key,
+  env_vars jsonb default '{}'::jsonb not null check (jsonb_typeof(env_vars) = 'object'),
+  created_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
 );
 
 -- -----------------------------------------------------------
@@ -136,6 +146,7 @@ create index idx_tasks_channel on public.tasks(channel_id, task_number);
 
 alter table public.profiles enable row level security;
 alter table public.agents enable row level security;
+alter table public.agent_runtime_settings enable row level security;
 alter table public.channels enable row level security;
 alter table public.channel_members enable row level security;
 alter table public.messages enable row level security;
@@ -148,6 +159,19 @@ create policy "Users can update own profile" on public.profiles for update using
 -- Agents: owner can manage, others can read
 create policy "Agents are viewable by everyone" on public.agents for select using (true);
 create policy "Owner can manage agents" on public.agents for all using (auth.uid() = owner_id);
+create policy "Agent owners can manage runtime settings" on public.agent_runtime_settings for all using (
+  exists (
+    select 1 from public.agents
+    where agents.id = agent_runtime_settings.agent_id
+      and agents.owner_id = (select auth.uid())
+  )
+) with check (
+  exists (
+    select 1 from public.agents
+    where agents.id = agent_runtime_settings.agent_id
+      and agents.owner_id = (select auth.uid())
+  )
+);
 
 -- Channels: members can read, creator can manage
 create policy "Channel members can view channels" on public.channels for select using (
@@ -158,6 +182,8 @@ create policy "Channel members can view channels" on public.channels for select 
   )
 );
 create policy "Authenticated users can create channels" on public.channels for insert with check (auth.uid() = created_by);
+create policy "Channel creators can update channels" on public.channels for update using ((select auth.uid()) = created_by);
+create policy "Channel creators can delete channels" on public.channels for delete using ((select auth.uid()) = created_by);
 
 -- Channel members: members can view
 create policy "Members can view channel membership" on public.channel_members for select using (
@@ -202,4 +228,5 @@ create policy "Channel members can manage tasks" on public.tasks for all using (
 -- Enable realtime for messages, agents, and channel_members tables
 alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.agents;
+alter publication supabase_realtime add table public.channels;
 alter publication supabase_realtime add table public.channel_members;

@@ -25,10 +25,20 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   MODEL_ITEMS_BY_RUNTIME,
+  REASONING_EFFORT_ITEMS,
   RUNTIME_ITEMS,
+  defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
+  runtimeSupportsModelSelection,
+  runtimeSupportsReasoningEffort,
+  type AgentReasoningEffort,
   type AgentRuntime,
 } from "@/lib/agent-runtime";
+import { EnvVarsEditor } from "./env-vars-editor";
+import {
+  envEntriesToRecord,
+  type EnvVarEntry,
+} from "@/lib/env-vars";
 
 interface CreateAgentDialogProps {
   open: boolean;
@@ -47,6 +57,9 @@ export function CreateAgentDialog({
   const [description, setDescription] = useState("");
   const [runtime, setRuntime] = useState<AgentRuntime>("claude");
   const [model, setModel] = useState("opus");
+  const [reasoningEffort, setReasoningEffort] =
+    useState<AgentReasoningEffort | null>(null);
+  const [envVars, setEnvVars] = useState<EnvVarEntry[]>([]);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -58,6 +71,8 @@ export function CreateAgentDialog({
         setDescription("");
         setRuntime("claude");
         setModel("opus");
+        setReasoningEffort(null);
+        setEnvVars([]);
         setSystemPrompt("");
         setError("");
       });
@@ -86,6 +101,8 @@ export function CreateAgentDialog({
           description,
           runtime,
           model,
+          reasoning_effort: reasoningEffort,
+          env_vars: envEntriesToRecord(envVars),
           system_prompt: systemPrompt,
           server_id: serverId,
         }),
@@ -108,6 +125,11 @@ export function CreateAgentDialog({
   const modelItems = MODEL_ITEMS_BY_RUNTIME[runtime];
   const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === runtime) ?? RUNTIME_ITEMS[0];
   const selectedModel = modelItems.find((m) => m.value === model) ?? modelItems[0];
+  const selectedReasoningEffort =
+    REASONING_EFFORT_ITEMS.find((item) => item.value === reasoningEffort) ??
+    REASONING_EFFORT_ITEMS[1];
+  const showModelSelect = runtimeSupportsModelSelection(runtime);
+  const showReasoningSelect = runtimeSupportsReasoningEffort(runtime);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -152,6 +174,7 @@ export function CreateAgentDialog({
                     const nextRuntime = (val as typeof selectedRuntime).value;
                     setRuntime(nextRuntime);
                     setModel(defaultModelForRuntime(nextRuntime));
+                    setReasoningEffort(defaultReasoningEffortForRuntime(nextRuntime));
                   }}
                   items={RUNTIME_ITEMS}
                 >
@@ -168,27 +191,59 @@ export function CreateAgentDialog({
                 </Select>
               </Field>
 
-              <Field>
-                <FieldLabel>Model</FieldLabel>
-                <Select
-                  value={selectedModel}
-                  onValueChange={(val) => {
-                    if (val) setModel((val as typeof selectedModel).value);
-                  }}
-                  items={modelItems}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a model" />
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {modelItems.map((item) => (
-                      <SelectItem key={item.value} value={item}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </Field>
+              {showModelSelect && (
+                <Field>
+                  <FieldLabel>Model</FieldLabel>
+                  <Select
+                    value={selectedModel}
+                    onValueChange={(val) => {
+                      if (val) setModel((val as typeof selectedModel).value);
+                    }}
+                    items={modelItems}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {modelItems.map((item) => (
+                        <SelectItem key={item.value} value={item}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </Field>
+              )}
+
+              {showReasoningSelect && (
+                <Field>
+                  <FieldLabel>Reasoning</FieldLabel>
+                  <Select
+                    value={selectedReasoningEffort}
+                    onValueChange={(val) => {
+                      if (val) {
+                        setReasoningEffort(
+                          (val as typeof selectedReasoningEffort).value
+                        );
+                      }
+                    }}
+                    items={REASONING_EFFORT_ITEMS}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select reasoning" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {REASONING_EFFORT_ITEMS.map((item) => (
+                        <SelectItem key={item.value} value={item}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </Field>
+              )}
+
+              <EnvVarsEditor entries={envVars} onChange={setEnvVars} />
 
               <Field>
                 <FieldLabel>

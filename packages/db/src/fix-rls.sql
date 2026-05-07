@@ -34,6 +34,16 @@ CREATE POLICY "Users can view their channels"
     )
   );
 
+DROP POLICY IF EXISTS "Channel creators can update channels" ON public.channels;
+CREATE POLICY "Channel creators can update channels"
+  ON public.channels FOR UPDATE
+  USING ((select auth.uid()) = created_by);
+
+DROP POLICY IF EXISTS "Channel creators can delete channels" ON public.channels;
+CREATE POLICY "Channel creators can delete channels"
+  ON public.channels FOR DELETE
+  USING ((select auth.uid()) = created_by);
+
 -- Messages: users can see messages in channels they're members of
 DROP POLICY IF EXISTS "Channel members can view messages" ON public.messages;
 CREATE POLICY "Users can view messages in their channels"

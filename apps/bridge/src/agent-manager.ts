@@ -8,8 +8,10 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { loadLocalRuntimeEnv } from "./runtime-env.js";
 import {
   defaultModelForRuntime,
+  defaultReasoningEffortForRuntime,
   getRuntimeDriver,
   isKnownModelForRuntime,
+  isKnownReasoningEffortForRuntime,
   normalizeRuntime,
   type ParsedRuntimeEvent,
   type RuntimeDriver,
@@ -31,6 +33,7 @@ interface AgentRecord {
   system_prompt: string | null;
   runtime?: string | null;
   model: string | null;
+  reasoning_effort?: string | null;
   status: string;
 }
 
@@ -324,6 +327,12 @@ ${agent.description || agent.display_name}
     const model = isKnownModelForRuntime(runtime, agent?.model)
       ? agent.model
       : defaultModelForRuntime(runtime);
+    const reasoningEffort = isKnownReasoningEffortForRuntime(
+      runtime,
+      agent?.reasoning_effort
+    )
+      ? agent.reasoning_effort
+      : defaultReasoningEffortForRuntime(runtime);
 
     // Ensure a persistent process is running
     let agentProc = this.processes.get(agentId);
@@ -333,7 +342,8 @@ ${agent.description || agent.display_name}
         session,
         systemPrompt,
         runtime,
-        model
+        model,
+        reasoningEffort
       );
       this.processes.set(agentId, agentProc);
     }
@@ -457,6 +467,12 @@ ${agent.description || agent.display_name}
     const model = isKnownModelForRuntime(runtime, agent?.model)
       ? agent.model
       : defaultModelForRuntime(runtime);
+    const reasoningEffort = isKnownReasoningEffortForRuntime(
+      runtime,
+      agent?.reasoning_effort
+    )
+      ? agent.reasoning_effort
+      : defaultReasoningEffortForRuntime(runtime);
 
     // Spawn new process — will resume the session via saved sessionId
     const newProc = await this.spawnProcess(
@@ -464,7 +480,8 @@ ${agent.description || agent.display_name}
       session,
       systemPrompt,
       runtime,
-      model
+      model,
+      reasoningEffort
     );
 
     // Restore pending queue
@@ -521,7 +538,8 @@ ${agent.description || agent.display_name}
   private buildAgentEnv(
     agentId: string,
     transport: CliTransport,
-    runtime: RuntimeId
+    runtime: RuntimeId,
+    dbEnv: Record<string, string>
   ): NodeJS.ProcessEnv {
     const runtimeEnv = loadLocalRuntimeEnv({
       serverId: this.serverId,
@@ -532,6 +550,7 @@ ${agent.description || agent.display_name}
     return {
       ...process.env,
       ...runtimeEnv,
+      ...dbEnv,
       FORCE_COLOR: "0",
       NO_COLOR: "1",
       // CLI injection: agent identity + Supabase credentials
@@ -547,12 +566,39 @@ ${agent.description || agent.display_name}
     };
   }
 
+  private async loadAgentEnvVars(agentId: string): Promise<Record<string, string>> {
+    const { data, error } = await this.supabase
+      .from("agent_runtime_settings")
+      .select("env_vars")
+      .eq("agent_id", agentId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn(
+        `  [${agentId}] Failed to load agent env vars: ${error.message}`
+      );
+      return {};
+    }
+
+    const envVars = data?.env_vars;
+    if (!envVars || typeof envVars !== "object" || Array.isArray(envVars)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(envVars).filter(
+        ([, value]) => typeof value === "string"
+      ) as Array<[string, string]>
+    );
+  }
+
   private async spawnProcess(
     agentId: string,
     session: AgentSession,
     systemPrompt: string,
     runtime: RuntimeId,
-    model: string
+    model: string,
+    reasoningEffort: string | null
   ): Promise<AgentProcess> {
     // Prepare CLI transport (.zano/ wrapper + env vars)
     const transport = this.prepareCliTransport(agentId, session);
@@ -568,9 +614,15 @@ ${agent.description || agent.display_name}
       workDir: session.workDir,
       systemPrompt,
       model,
+      reasoningEffort,
       sessionId,
       zanoDir: transport.zanoDir,
-      env: this.buildAgentEnv(agentId, transport, runtime),
+      env: this.buildAgentEnv(
+        agentId,
+        transport,
+        runtime,
+        await this.loadAgentEnvVars(agentId)
+      ),
     });
 
     if (launch.sessionId && launch.sessionId !== sessionId) {
@@ -767,6 +819,25 @@ ${agent.description || agent.display_name}
   /** Get the workspace directory for an agent */
   getWorkspaceDir(agentId: string): string | null {
     return this.sessions.get(agentId)?.workDir ?? null;
+  }
+
+  stopAgent(agentId: string) {
+    const agentProc = this.processes.get(agentId);
+    if (agentProc) {
+      if (agentProc.heartbeatTimer) {
+        clearInterval(agentProc.heartbeatTimer);
+      }
+      for (const queued of agentProc.messageQueue) {
+        queued.reject(new Error("Agent stopped"));
+      }
+      agentProc.messageQueue = [];
+      if (!agentProc.proc.killed) {
+        agentProc.proc.kill();
+      }
+      this.processes.delete(agentId);
+    }
+
+    this.sessions.delete(agentId);
   }
 
   stopAll() {

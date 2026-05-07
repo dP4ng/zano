@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
+  defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
   isValidModelForRuntime,
+  isValidReasoningEffortForRuntime,
   normalizeAgentRuntime,
+  runtimeSupportsReasoningEffort,
 } from "@/lib/agent-runtime";
+import { normalizeEnvVars } from "@/lib/env-vars";
 
 // GET /api/agents — list user's agents
 export async function GET() {
@@ -48,6 +52,8 @@ export async function POST(request: NextRequest) {
     system_prompt,
     runtime: rawRuntime,
     model,
+    reasoning_effort,
+    env_vars,
     server_id,
   } = body;
 
@@ -72,6 +78,18 @@ export async function POST(request: NextRequest) {
   const agentModel = isValidModelForRuntime(runtime, model)
     ? model
     : defaultModelForRuntime(runtime);
+  const agentReasoningEffort = runtimeSupportsReasoningEffort(runtime)
+    ? isValidReasoningEffortForRuntime(runtime, reasoning_effort)
+      ? reasoning_effort
+      : defaultReasoningEffortForRuntime(runtime)
+    : null;
+  const envVars = normalizeEnvVars(env_vars);
+  if (!envVars) {
+    return NextResponse.json(
+      { error: "env_vars must be an object of string values keyed by valid env names" },
+      { status: 400 }
+    );
+  }
 
   if (!server_id) {
     return NextResponse.json(
@@ -89,6 +107,7 @@ export async function POST(request: NextRequest) {
       system_prompt: system_prompt?.trim() || null,
       runtime,
       model: agentModel,
+      reasoning_effort: agentReasoningEffort,
       status: "offline",
       owner_id: user.id,
       server_id,
@@ -98,6 +117,20 @@ export async function POST(request: NextRequest) {
 
   if (agentError) {
     return NextResponse.json({ error: agentError.message }, { status: 500 });
+  }
+
+  if (Object.keys(envVars).length > 0) {
+    const { error: envError } = await supabase
+      .from("agent_runtime_settings")
+      .insert({
+        agent_id: agent.id,
+        env_vars: envVars,
+      });
+
+    if (envError) {
+      await supabase.from("agents").delete().eq("id", agent.id);
+      return NextResponse.json({ error: envError.message }, { status: 500 });
+    }
   }
 
   // 2. Create a DM channel for this agent

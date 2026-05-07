@@ -12,7 +12,7 @@ import { ContextMenu } from "./context-menu";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { ChevronDownIcon, CheckIcon, PlusIcon, PencilIcon, LogOutIcon, MonitorIcon } from "lucide-react";
+import { ChevronDownIcon, CheckIcon, PlusIcon, PencilIcon, LogOutIcon, MonitorIcon, Trash2Icon } from "lucide-react";
 import { GeneratedAvatar } from "./generated-avatar";
 
 interface Server {
@@ -195,7 +195,9 @@ export function Sidebar({
 
   // Load sidebar data on mount (realtime subscriptions handle subsequent updates)
   useEffect(() => {
-    loadData();
+    queueMicrotask(() => {
+      void loadData();
+    });
   }, [loadData]);
 
   // Set up realtime subscriptions (stable across navigations, only recreate on server change)
@@ -244,7 +246,35 @@ export function Sidebar({
       )
       .on(
         "postgres_changes",
+        { event: "DELETE", schema: "public", table: "agents" },
+        (payload) => {
+          const deleted = payload.old as { id?: string };
+          if (deleted.id) {
+            setAgents((prev) => prev.filter((agent) => agent.id !== deleted.id));
+            setDmChannels((prev) =>
+              prev.filter((dm) => dm.agent?.id !== deleted.id)
+            );
+          }
+          loadData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "channels" },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        "postgres_changes",
         { event: "INSERT", schema: "public", table: "channel_members" },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "channel_members" },
         () => {
           loadData();
         }
@@ -321,6 +351,24 @@ export function Sidebar({
 
   function handleChannelCreated() {
     loadData();
+  }
+
+  async function handleDeleteChannel(channel: Channel) {
+    if (!confirm(`Delete #${channel.name}?`)) return;
+
+    const res = await fetch(`/api/channels/${channel.id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Failed to delete channel");
+      return;
+    }
+
+    await loadData();
+    if (activeChannelId === channel.id) {
+      router.push(`/s/${serverSlug}`);
+    }
   }
 
   function getStatusDot(agentId: string) {
@@ -580,6 +628,14 @@ export function Sidebar({
               label: "Edit Channel",
               icon: <PencilIcon className="size-3.5" />,
               onClick: () => setEditingChannel(contextMenu.channel),
+            },
+            {
+              label: "Delete Channel",
+              icon: <Trash2Icon className="size-3.5" />,
+              danger: true,
+              onClick: () => {
+                void handleDeleteChannel(contextMenu.channel);
+              },
             },
           ]}
         />

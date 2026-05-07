@@ -14,6 +14,7 @@ export interface User {
 
 export type AgentRuntime = "claude" | "codex" | "kimi";
 export type AgentModel = string;
+export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type AgentStatus = "online" | "sleeping" | "offline";
 export type AgentActivity = "idle" | "thinking" | "working" | "error";
 
@@ -34,6 +35,7 @@ export interface Agent {
   system_prompt: string | null;
   runtime: AgentRuntime;
   model: AgentModel;
+  reasoning_effort: AgentReasoningEffort | null;
   status: AgentStatus;
   owner_id: string;
   server_id: string;

@@ -17,6 +17,7 @@ interface ConnectResponse {
     description: string | null;
     runtime?: string | null;
     model: string;
+    reasoning_effort?: string | null;
     status: string;
   }>;
 }

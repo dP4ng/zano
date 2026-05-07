@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { MessageArea } from "@/components/message-area";
 import { AgentSettingsPanel } from "@/components/agent-settings-panel";
 
@@ -14,6 +14,8 @@ interface AgentInfo {
 
 export default function DmPage() {
   const params = useParams();
+  const router = useRouter();
+  const slug = params.slug as string;
   const channelId = params.channelId as string;
   const [settingsAgent, setSettingsAgent] = useState<AgentInfo | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -29,8 +31,8 @@ export default function DmPage() {
 
   const handleAgentDeleted = useCallback(() => {
     setSettingsAgent(null);
-    // Navigate back would go here, but for now just clear
-  }, []);
+    router.push(`/s/${slug}`);
+  }, [router, slug]);
 
   const handleAgentUpdated = useCallback((updated: AgentInfo) => {
     setSettingsAgent(updated);

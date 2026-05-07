@@ -27,6 +27,7 @@ test("codex driver starts app-server and seeds a thread with developer instructi
     workDir: "/workspace/agent-1",
     systemPrompt: "system instructions",
     model: "gpt-5.5",
+    reasoningEffort: "xhigh",
     sessionId: null,
     zanoDir: "/workspace/agent-1/.zano",
     env: baseEnv,
@@ -37,6 +38,7 @@ test("codex driver starts app-server and seeds a thread with developer instructi
   assert.match(launch.initialInput.join("\n"), /"method":"initialize"/);
   assert.match(launch.initialInput.join("\n"), /"method":"thread\/start"/);
   assert.match(launch.initialInput.join("\n"), /"developerInstructions":"system instructions"/);
+  assert.match(launch.initialInput.join("\n"), /"model_reasoning_effort":"xhigh"/);
 });
 
 test("kimi driver starts wire mode with generated agent and mcp config files", () => {
@@ -48,6 +50,7 @@ test("kimi driver starts wire mode with generated agent and mcp config files", (
     workDir,
     systemPrompt: "system instructions",
     model: "default",
+    reasoningEffort: null,
     sessionId: null,
     zanoDir: join(workDir, ".zano"),
     env: baseEnv,

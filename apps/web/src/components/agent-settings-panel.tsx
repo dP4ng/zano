@@ -30,11 +30,22 @@ import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from '@/c
 import { Dialog, DialogPopup, DialogHeader, DialogTitle, DialogPanel } from '@/components/ui/dialog';
 import {
   MODEL_ITEMS_BY_RUNTIME,
+  REASONING_EFFORT_ITEMS,
   RUNTIME_ITEMS,
+  defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
+  runtimeSupportsModelSelection,
+  runtimeSupportsReasoningEffort,
   normalizeAgentRuntime,
+  type AgentReasoningEffort,
   type AgentRuntime,
 } from '@/lib/agent-runtime';
+import { EnvVarsEditor } from './env-vars-editor';
+import {
+  envEntriesToRecord,
+  envRecordToEntries,
+  type EnvVarEntry,
+} from '@/lib/env-vars';
 
 interface AgentInfo {
   id: string;
@@ -51,6 +62,7 @@ interface AgentFull {
   system_prompt: string | null;
   runtime: AgentRuntime | null;
   model: string;
+  reasoning_effort: AgentReasoningEffort | null;
   status: string;
 }
 
@@ -181,6 +193,9 @@ function SettingsTab({
   const [description, setDescription] = useState('');
   const [runtime, setRuntime] = useState<AgentRuntime>('claude');
   const [model, setModel] = useState('opus');
+  const [reasoningEffort, setReasoningEffort] =
+    useState<AgentReasoningEffort | null>(null);
+  const [envVars, setEnvVars] = useState<EnvVarEntry[]>([]);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [saving, setSaving] = useState(false);
@@ -209,9 +224,22 @@ function SettingsTab({
       setDescription(a.description || '');
       setRuntime(nextRuntime);
       setModel(a.model || defaultModelForRuntime(nextRuntime));
+      setReasoningEffort(
+        a.reasoning_effort || defaultReasoningEffortForRuntime(nextRuntime)
+      );
       setSystemPrompt(a.system_prompt || '');
     }
     setLoading(false);
+  }
+
+  async function loadEnvVars() {
+    const res = await fetch(`/api/agents/${agent.id}/env`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to load environment variables');
+    }
+    const data = await res.json();
+    setEnvVars(envRecordToEntries(data.env_vars || {}));
   }
 
   async function loadSkills() {
@@ -243,7 +271,10 @@ function SettingsTab({
 
   useEffect(() => {
     queueMicrotask(() => {
-      void loadAgent();
+      void Promise.all([loadAgent(), loadEnvVars()]).catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to load agent');
+        setLoading(false);
+      });
       void loadSkills();
     });
   }, [agent.id]);
@@ -263,6 +294,7 @@ function SettingsTab({
           description: description.trim() || null,
           runtime,
           model,
+          reasoning_effort: reasoningEffort,
           system_prompt: systemPrompt.trim() || null,
         }),
       });
@@ -270,6 +302,19 @@ function SettingsTab({
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to save');
+      }
+
+      const envRes = await fetch(`/api/agents/${agent.id}/env`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          env_vars: envEntriesToRecord(envVars),
+        }),
+      });
+
+      if (!envRes.ok) {
+        const data = await envRes.json();
+        throw new Error(data.error || 'Failed to save environment variables');
       }
 
       const { agent: updated } = await res.json();
@@ -342,6 +387,11 @@ function SettingsTab({
   const modelItems = MODEL_ITEMS_BY_RUNTIME[runtime];
   const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === runtime) ?? RUNTIME_ITEMS[0];
   const selectedModel = modelItems.find((m) => m.value === model) ?? modelItems[0];
+  const selectedReasoningEffort =
+    REASONING_EFFORT_ITEMS.find((item) => item.value === reasoningEffort) ??
+    REASONING_EFFORT_ITEMS[1];
+  const showModelSelect = runtimeSupportsModelSelection(runtime);
+  const showReasoningSelect = runtimeSupportsReasoningEffort(runtime);
 
   if (loading) {
     return (
@@ -391,6 +441,7 @@ function SettingsTab({
                 const nextRuntime = (val as typeof selectedRuntime).value;
                 setRuntime(nextRuntime);
                 setModel(defaultModelForRuntime(nextRuntime));
+                setReasoningEffort(defaultReasoningEffortForRuntime(nextRuntime));
               }}
               items={RUNTIME_ITEMS}>
               <SelectTrigger size="sm" className="w-auto min-w-32">
@@ -405,28 +456,66 @@ function SettingsTab({
               </SelectPopup>
             </Select>
           </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Model</span>
-            <Select
-              value={selectedModel}
-              onValueChange={(val) => {
-                if (val) setModel((val as typeof selectedModel).value);
-              }}
-              items={modelItems}>
-              <SelectTrigger size="sm" className="w-auto min-w-24">
-                <SelectValue placeholder="Select model" />
-              </SelectTrigger>
-              <SelectPopup>
-                {modelItems.map((item) => (
-                  <SelectItem key={item.value} value={item}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          </div>
+          {showModelSelect && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Model</span>
+                <Select
+                  value={selectedModel}
+                  onValueChange={(val) => {
+                    if (val) setModel((val as typeof selectedModel).value);
+                  }}
+                  items={modelItems}>
+                  <SelectTrigger size="sm" className="w-auto min-w-24">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {modelItems.map((item) => (
+                      <SelectItem key={item.value} value={item}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            </>
+          )}
+          {showReasoningSelect && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Reasoning</span>
+                <Select
+                  value={selectedReasoningEffort}
+                  onValueChange={(val) => {
+                    if (val) {
+                      setReasoningEffort(
+                        (val as typeof selectedReasoningEffort).value
+                      );
+                    }
+                  }}
+                  items={REASONING_EFFORT_ITEMS}>
+                  <SelectTrigger size="sm" className="w-auto min-w-28">
+                    <SelectValue placeholder="Select reasoning" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {REASONING_EFFORT_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            </>
+          )}
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Environment</h3>
+        <EnvVarsEditor entries={envVars} onChange={setEnvVars} />
       </section>
 
       {/* Instructions */}

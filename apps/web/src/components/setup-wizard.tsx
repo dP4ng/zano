@@ -25,10 +25,20 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { CheckIcon, CopyIcon, LoaderIcon, MonitorIcon, TerminalIcon } from "lucide-react";
 import {
   MODEL_ITEMS_BY_RUNTIME,
+  REASONING_EFFORT_ITEMS,
   RUNTIME_ITEMS,
+  defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
+  runtimeSupportsModelSelection,
+  runtimeSupportsReasoningEffort,
+  type AgentReasoningEffort,
   type AgentRuntime,
 } from "@/lib/agent-runtime";
+import { EnvVarsEditor } from "./env-vars-editor";
+import {
+  envEntriesToRecord,
+  type EnvVarEntry,
+} from "@/lib/env-vars";
 
 interface SetupWizardProps {
   serverId: string;
@@ -49,6 +59,9 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   const [agentDescription, setAgentDescription] = useState("");
   const [agentRuntime, setAgentRuntime] = useState<AgentRuntime>("claude");
   const [agentModel, setAgentModel] = useState("sonnet");
+  const [agentReasoningEffort, setAgentReasoningEffort] =
+    useState<AgentReasoningEffort | null>(null);
+  const [agentEnvVars, setAgentEnvVars] = useState<EnvVarEntry[]>([]);
   const [agentPrompt, setAgentPrompt] = useState("");
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [agentError, setAgentError] = useState("");
@@ -124,6 +137,8 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
           description: agentDescription.trim() || undefined,
           runtime: agentRuntime,
           model: agentModel,
+          reasoning_effort: agentReasoningEffort,
+          env_vars: envEntriesToRecord(agentEnvVars),
           system_prompt: agentPrompt.trim() || undefined,
           server_id: serverId,
         }),
@@ -153,6 +168,11 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   const modelItems = MODEL_ITEMS_BY_RUNTIME[agentRuntime];
   const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === agentRuntime) ?? RUNTIME_ITEMS[0];
   const selectedModel = modelItems.find((m) => m.value === agentModel) ?? modelItems[0];
+  const selectedReasoningEffort =
+    REASONING_EFFORT_ITEMS.find((item) => item.value === agentReasoningEffort) ??
+    REASONING_EFFORT_ITEMS[1];
+  const showModelSelect = runtimeSupportsModelSelection(agentRuntime);
+  const showReasoningSelect = runtimeSupportsReasoningEffort(agentRuntime);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) handleSkip(); }}>
@@ -166,7 +186,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
               <DialogTitle className="text-center">Connect Your Machine</DialogTitle>
               <DialogDescription className="text-center">
                 Run this command on your computer to connect it to Zano.
-                Make sure <a href="https://docs.anthropic.com/en/docs/claude-code/overview" target="_blank" rel="noopener" className="underline underline-offset-2">Claude Code</a> is installed first.
+                Make sure your selected CLI runtime is installed first.
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -288,6 +308,7 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
                         const nextRuntime = (val as typeof selectedRuntime).value;
                         setAgentRuntime(nextRuntime);
                         setAgentModel(defaultModelForRuntime(nextRuntime));
+                        setAgentReasoningEffort(defaultReasoningEffortForRuntime(nextRuntime));
                       }}
                       items={RUNTIME_ITEMS}
                     >
@@ -304,27 +325,59 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
                     </Select>
                   </Field>
 
-                  <Field>
-                    <FieldLabel>Model</FieldLabel>
-                    <Select
-                      value={selectedModel}
-                      onValueChange={(val) => {
-                        if (val) setAgentModel((val as typeof selectedModel).value);
-                      }}
-                      items={modelItems}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a model" />
-                      </SelectTrigger>
-                      <SelectPopup>
-                        {modelItems.map((item) => (
-                          <SelectItem key={item.value} value={item}>
-                            {item.label}
-                          </SelectItem>
-                        ))}
-                      </SelectPopup>
-                    </Select>
-                  </Field>
+                  {showModelSelect && (
+                    <Field>
+                      <FieldLabel>Model</FieldLabel>
+                      <Select
+                        value={selectedModel}
+                        onValueChange={(val) => {
+                          if (val) setAgentModel((val as typeof selectedModel).value);
+                        }}
+                        items={modelItems}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a model" />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          {modelItems.map((item) => (
+                            <SelectItem key={item.value} value={item}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </Field>
+                  )}
+
+                  {showReasoningSelect && (
+                    <Field>
+                      <FieldLabel>Reasoning</FieldLabel>
+                      <Select
+                        value={selectedReasoningEffort}
+                        onValueChange={(val) => {
+                          if (val) {
+                            setAgentReasoningEffort(
+                              (val as typeof selectedReasoningEffort).value
+                            );
+                          }
+                        }}
+                        items={REASONING_EFFORT_ITEMS}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select reasoning" />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          {REASONING_EFFORT_ITEMS.map((item) => (
+                            <SelectItem key={item.value} value={item}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </Field>
+                  )}
+
+                  <EnvVarsEditor entries={agentEnvVars} onChange={setAgentEnvVars} />
 
                   <Field>
                     <FieldLabel>

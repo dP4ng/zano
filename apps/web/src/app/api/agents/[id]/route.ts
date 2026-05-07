@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
   isValidModelForRuntime,
+  isValidReasoningEffortForRuntime,
   normalizeAgentRuntime,
+  runtimeSupportsReasoningEffort,
 } from "@/lib/agent-runtime";
 
 // GET /api/agents/[id] — get a single agent
@@ -97,6 +101,20 @@ export async function PUT(
   } else if (body.runtime !== undefined) {
     updates.model = defaultModelForRuntime(runtime);
   }
+  if (body.reasoning_effort !== undefined || body.runtime !== undefined) {
+    if (!runtimeSupportsReasoningEffort(runtime)) {
+      updates.reasoning_effort = null;
+    } else if (body.reasoning_effort === undefined) {
+      updates.reasoning_effort = defaultReasoningEffortForRuntime(runtime);
+    } else if (isValidReasoningEffortForRuntime(runtime, body.reasoning_effort)) {
+      updates.reasoning_effort = body.reasoning_effort;
+    } else {
+      return NextResponse.json(
+        { error: "reasoning_effort is not valid for the selected runtime" },
+        { status: 400 }
+      );
+    }
+  }
 
   const { data: agent, error } = await supabase
     .from("agents")
@@ -130,7 +148,7 @@ export async function DELETE(
   // Verify ownership
   const { data: existing } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, server_id")
     .eq("id", id)
     .eq("owner_id", user.id)
     .single();
@@ -139,42 +157,84 @@ export async function DELETE(
     return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   }
 
-  // Find and delete the DM channel (messages cascade via FK)
-  const { data: dmMembership } = await supabase
+  const admin = createAdminClient();
+
+  // Find and delete the DM channel (messages/channel members cascade via FK)
+  const { data: dmMembership, error: membershipError } = await admin
     .from("channel_members")
     .select("channel_id")
     .eq("member_id", id)
     .eq("member_type", "agent");
 
-  if (dmMembership) {
-    for (const m of dmMembership) {
-      const { data: ch } = await supabase
-        .from("channels")
-        .select("id, type")
-        .eq("id", m.channel_id)
-        .eq("type", "dm")
-        .single();
+  if (membershipError) {
+    return NextResponse.json(
+      { error: membershipError.message },
+      { status: 500 }
+    );
+  }
 
-      if (ch) {
-        // Delete messages in this DM channel
-        await supabase.from("messages").delete().eq("channel_id", ch.id);
-        // Delete channel members
-        await supabase.from("channel_members").delete().eq("channel_id", ch.id);
-        // Delete channel
-        await supabase.from("channels").delete().eq("id", ch.id);
+  if (dmMembership) {
+    const channelIds = dmMembership.map((m) => m.channel_id);
+    if (channelIds.length > 0) {
+      const { data: dmChannels, error: dmChannelError } = await admin
+        .from("channels")
+        .select("id")
+        .in("id", channelIds)
+        .eq("type", "dm");
+
+      if (dmChannelError) {
+        return NextResponse.json(
+          { error: dmChannelError.message },
+          { status: 500 }
+        );
+      }
+
+      const dmChannelIds = (dmChannels ?? []).map((channel) => channel.id);
+      if (dmChannelIds.length > 0) {
+        const { error: dmDeleteError } = await admin
+          .from("channels")
+          .delete()
+          .in("id", dmChannelIds);
+
+        if (dmDeleteError) {
+          return NextResponse.json(
+            { error: dmDeleteError.message },
+            { status: 500 }
+          );
+        }
       }
     }
   }
 
   // Remove agent from any group channels
-  await supabase
+  const { error: channelMemberError } = await admin
     .from("channel_members")
     .delete()
     .eq("member_id", id)
     .eq("member_type", "agent");
+  if (channelMemberError) {
+    return NextResponse.json(
+      { error: channelMemberError.message },
+      { status: 500 }
+    );
+  }
+
+  const { error: serverMemberError } = await admin
+    .from("server_members")
+    .delete()
+    .eq("server_id", existing.server_id)
+    .eq("member_id", id)
+    .eq("member_type", "agent");
+
+  if (serverMemberError) {
+    return NextResponse.json(
+      { error: serverMemberError.message },
+      { status: 500 }
+    );
+  }
 
   // Delete the agent
-  const { error } = await supabase.from("agents").delete().eq("id", id);
+  const { error } = await admin.from("agents").delete().eq("id", id);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
