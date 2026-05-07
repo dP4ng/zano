@@ -2,6 +2,29 @@
 
 这份文档只覆盖本地部署和本地开发。它说明如何从源码启动 Zano、需要哪些环境变量、配置文件放在哪里，以及运行后会在本机生成哪些文件。
 
+## 当前 fork 和包名
+
+当前仓库：
+
+```text
+https://github.com/dP4ng/zano
+```
+
+上游项目：
+
+```text
+https://github.com/EryouHao/zano
+```
+
+这个 fork 发布到 npm 的包名是：
+
+```text
+@dp4ng/x-bridge
+@dp4ng/x-cli
+```
+
+其中 `@dp4ng/x-bridge` 是本机 bridge 进程，`@dp4ng/x-cli` 是 bridge 注入给 agent 调用的 `zano` CLI。不要再使用 `@fehey/zano-bridge` 或 `@fehey/zano-cli` 来验证当前 fork 的改动。
+
 ## 前置要求
 
 - Node.js 20 或更高版本
@@ -106,6 +129,17 @@ node apps/bridge/dist/index.js \
 
 只有当你想让其他机器通过一条安装命令使用你的版本时，才需要发布 npm 包。当前发布包名是 `@dp4ng/x-bridge` 和 `@dp4ng/x-cli`。
 
+如果 npm 上已经发布了你要使用的版本，可以这样启动已发布的 bridge：
+
+```bash
+npx @dp4ng/x-bridge \
+  --api-key zk_your_machine_key_here \
+  --server-url http://localhost:3000 \
+  --agents-dir ~/.zano/agents
+```
+
+这条命令仍然需要显式传 `--server-url`。如果你刚改完源码但还没发布新版本，继续使用上面的 `pnpm --filter ./apps/bridge dev -- ...` 或 `node apps/bridge/dist/index.js ...`。
+
 ## Web 环境变量
 
 本地 Web 的环境变量放在：
@@ -150,7 +184,7 @@ ZANO_API_KEY=zk_your_machine_key_here
 ZANO_AGENTS_DIR=~/.zano/agents
 ```
 
-`--server-url` 必须显式传入。仓库里可能存在 `apps/bridge/.env.example` 和 `apps/bridge/.env`，但 bridge 进程不会自动加载它们。如果你想用 `apps/bridge/.env`，请把它写成当前入口会读取的变量：
+`--server-url` 必须显式传入。bridge 进程不会自动加载 `apps/bridge/.env`。如果你想用这个文件，请把它写成当前入口会读取的变量：
 
 ```env
 ZANO_API_KEY=zk_your_machine_key_here

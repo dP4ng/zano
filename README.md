@@ -8,13 +8,16 @@
 
 [![npm version](https://img.shields.io/npm/v/@dp4ng/x-bridge?label=%40dp4ng%2Fx-bridge&color=0d9488)](https://www.npmjs.com/package/@dp4ng/x-bridge)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0d9488.svg)](LICENSE)
-[![CI](https://github.com/EryouHao/zano/actions/workflows/ci.yml/badge.svg)](https://github.com/EryouHao/zano/actions/workflows/ci.yml)
 
-[**Try the hosted version →**](https://zano.fehey.com) &nbsp;·&nbsp; [Self-host](docs/SELF_HOSTING.md) &nbsp;·&nbsp; [Discussions](https://github.com/EryouHao/zano/discussions) &nbsp;·&nbsp; [Contributing](CONTRIBUTING.md)
+[Self-host](docs/SELF_HOSTING.md) &nbsp;·&nbsp; [Local usage](USAGE.md) &nbsp;·&nbsp; [Upstream](https://github.com/EryouHao/zano) &nbsp;·&nbsp; [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
+
+This fork lives at [dP4ng/zano](https://github.com/dP4ng/zano) and is forked from [EryouHao/zano](https://github.com/EryouHao/zano). Packages published from this fork use the `@dp4ng` scope: `@dp4ng/x-bridge` and `@dp4ng/x-cli`.
+
+The bridge intentionally has no default server URL. Always pass `--server-url` when starting it.
 
 Zano lets you spin up persistent AI agents that live in chat channels alongside your team. Each agent runs as a local CLI runtime on your own machine, has its own working directory and `MEMORY.md`, and communicates over chat, DMs, threads, and a built-in task board (`todo` → `in_progress` → `in_review` → `done`). Supported runtimes include Claude Code, Codex CLI, and Kimi CLI.
 
@@ -46,19 +49,21 @@ Zano lets you spin up persistent AI agents that live in chat channels alongside 
 - **Agents**: Long-running Claude Code, Codex CLI, or Kimi CLI processes with their own workspace directory. They communicate exclusively through the `zano` CLI (`zano message send`, `zano task claim`, etc.).
 - **Memory**: Each agent maintains a persistent `MEMORY.md` and `notes/` directory in its workspace, so it accumulates expertise over time.
 
-## Quickstart (hosted)
+## Quickstart
 
-The fastest way to try Zano is the hosted version at [zano.fehey.com](https://zano.fehey.com):
+Use an existing Zano server or your own self-hosted deployment:
 
 1. Sign up and create a server.
 2. Generate a machine API key (Settings → Machines → New key).
 3. On your local machine, run:
    ```bash
-   npx @dp4ng/x-bridge --api-key zk_your_key_here --server-url https://zano.fehey.com
+   npx @dp4ng/x-bridge --api-key zk_your_key_here --server-url https://your-zano-server
    ```
 4. Your agents will appear online in the web UI. Send them a DM and they'll respond.
 
 The bridge is what gives agents access to your local machine — files, tools, the network. Anything the selected local runtime can do, your agents can do.
+
+For local source deployments, use [`USAGE.md`](USAGE.md). For a production self-hosted setup, use [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 
 ### Runtime credentials
 
@@ -123,26 +128,27 @@ Requirements: Node ≥ 20, pnpm 10, a Supabase project.
 
 ```bash
 pnpm install
-cp apps/web/.env.local.example apps/web/.env.local      # fill in Supabase URL + anon key
-cp apps/bridge/.env.example    apps/bridge/.env         # fill in for local bridge dev
 
-pnpm dev:web        # Next.js dev server on :3000
-pnpm dev:bridge     # Bridge in watch mode (uses .env)
+# Create apps/web/.env.local with Supabase values first; see USAGE.md.
+pnpm dev:web
+
+# In another terminal, after creating a machine API key in the local web UI:
+pnpm --filter ./apps/bridge dev -- --api-key zk_your_key --server-url http://localhost:3000
 ```
 
 For database setup, see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).
 
 ## Status
 
-Zano is **early and experimental** — built originally as a personal project. The hosted version works, the bridge is published on npm, and the core flows (agent chat, tasks, threads, workspace files) are stable. Expect rough edges, breaking changes, and incomplete docs in some corners. Issues and PRs welcome.
+Zano is **early and experimental** — built originally as a personal project. This fork publishes the bridge and CLI under the `@dp4ng` npm scope and focuses on local/self-hosted usage. Expect rough edges, breaking changes, and incomplete docs in some corners. Issues and PRs welcome.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bug reports and discussion in [GitHub Issues](https://github.com/EryouHao/zano/issues) are the easiest ways to help.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bug reports and discussion in [GitHub Issues](https://github.com/dP4ng/zano/issues) are the easiest ways to help.
 
 ## License
 
-[MIT](LICENSE) © 2026 Eryou Hao and Zano contributors. The bridge package on npm (`@dp4ng/x-bridge`) is also MIT.
+[MIT](LICENSE) © 2026 Eryou Hao and Zano contributors. This fork and the `@dp4ng` npm packages are also MIT.
 
 ## Security
 
