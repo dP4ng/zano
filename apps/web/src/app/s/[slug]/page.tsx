@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ApiKeysSection } from "@/components/api-keys-section";
 import { SetupWizard } from "@/components/setup-wizard";
+import { subscribeServerDataChanged } from "@/lib/server-data-events";
 
 interface ServerStats {
   id: string;
@@ -28,56 +29,93 @@ export default function ServerHomePage() {
   // Show setup wizard when redirected from onboarding
   useEffect(() => {
     if (searchParams.get("setup") === "true") {
-      setShowSetup(true);
+      queueMicrotask(() => setShowSetup(true));
       // Clean up URL without triggering navigation
       window.history.replaceState({}, "", `/s/${slug}`);
     }
   }, [searchParams, slug]);
 
-  useEffect(() => {
-    async function loadStats() {
-      const supabase = createClient();
+  const loadStats = useCallback(async () => {
+    const supabase = createClient();
 
-      const { data: server } = await supabase
-        .from("servers")
-        .select("id, name, description")
-        .eq("slug", slug)
-        .single();
+    const { data: server } = await supabase
+      .from("servers")
+      .select("id, name, description")
+      .eq("slug", slug)
+      .single();
 
-      if (!server) {
-        setLoading(false);
-        return;
-      }
-
-      const [{ count: agentCount }, { count: channelCount }, { count: memberCount }] =
-        await Promise.all([
-          supabase
-            .from("agents")
-            .select("*", { count: "exact", head: true })
-            .eq("server_id", server.id),
-          supabase
-            .from("channels")
-            .select("*", { count: "exact", head: true })
-            .eq("server_id", server.id),
-          supabase
-            .from("server_members")
-            .select("*", { count: "exact", head: true })
-            .eq("server_id", server.id),
-        ]);
-
-      setStats({
-        id: server.id,
-        name: server.name,
-        description: server.description,
-        agentCount: agentCount ?? 0,
-        channelCount: channelCount ?? 0,
-        memberCount: memberCount ?? 0,
-      });
+    if (!server) {
       setLoading(false);
+      return;
     }
 
-    loadStats();
+    const [{ count: agentCount }, { count: channelCount }, { count: memberCount }] =
+      await Promise.all([
+        supabase
+          .from("agents")
+          .select("*", { count: "exact", head: true })
+          .eq("server_id", server.id),
+        supabase
+          .from("channels")
+          .select("*", { count: "exact", head: true })
+          .eq("server_id", server.id),
+        supabase
+          .from("server_members")
+          .select("*", { count: "exact", head: true })
+          .eq("server_id", server.id),
+      ]);
+
+    setStats({
+      id: server.id,
+      name: server.name,
+      description: server.description,
+      agentCount: agentCount ?? 0,
+      channelCount: channelCount ?? 0,
+      memberCount: memberCount ?? 0,
+    });
+    setLoading(false);
   }, [slug]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadStats();
+    });
+  }, [loadStats]);
+
+  useEffect(() => {
+    if (!stats?.id) return;
+    return subscribeServerDataChanged(stats.id, () => {
+      void loadStats();
+    });
+  }, [loadStats, stats?.id]);
+
+  useEffect(() => {
+    if (!stats?.id) return;
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`server-stats:${stats.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "agents" },
+        () => void loadStats()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "channels" },
+        () => void loadStats()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "server_members" },
+        () => void loadStats()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadStats, stats?.id]);
 
   if (loading) {
     return (

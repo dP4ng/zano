@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   defaultModelForRuntime,
+  defaultReasoningEffortForRuntime,
   getRuntimeDriver,
+  isKnownReasoningEffortForRuntime,
   normalizeRuntime,
 } from "../src/runtimes/index.js";
 
@@ -17,6 +19,31 @@ test("normalizes unsupported runtimes to claude defaults", () => {
   assert.equal(defaultModelForRuntime("claude"), "opus");
   assert.equal(defaultModelForRuntime("codex"), "gpt-5.5");
   assert.equal(defaultModelForRuntime("kimi"), "default");
+});
+
+test("claude driver supports effort levels and passes them to Claude Code", () => {
+  assert.equal(defaultReasoningEffortForRuntime("claude"), "high");
+  assert.equal(isKnownReasoningEffortForRuntime("claude", "max"), true);
+  assert.equal(isKnownReasoningEffortForRuntime("codex", "max"), false);
+
+  const driver = getRuntimeDriver("claude");
+  const launch = driver.buildLaunch({
+    agentId: "agent-1",
+    displayName: "Claude Agent",
+    workDir: "/workspace/agent-1",
+    systemPrompt: "system instructions",
+    model: "opus",
+    reasoningEffort: "max",
+    sessionId: null,
+    zanoDir: "/workspace/agent-1/.zano",
+    env: baseEnv,
+  });
+
+  assert.equal(launch.command, "claude");
+  assert.deepEqual(
+    launch.args.slice(launch.args.indexOf("--effort"), launch.args.indexOf("--effort") + 2),
+    ["--effort", "max"]
+  );
 });
 
 test("codex driver starts app-server and seeds a thread with developer instructions", () => {

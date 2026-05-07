@@ -14,7 +14,7 @@ export interface User {
 
 export type AgentRuntime = "claude" | "codex" | "kimi";
 export type AgentModel = string;
-export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export type AgentStatus = "online" | "sleeping" | "offline";
 export type AgentActivity = "idle" | "thinking" | "working" | "error";
 

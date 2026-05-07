@@ -14,6 +14,8 @@ UPDATE public.agents SET runtime = 'claude' WHERE runtime IS NULL;
 UPDATE public.agents SET runtime = 'claude'
 WHERE runtime NOT IN ('claude', 'codex', 'kimi');
 UPDATE public.agents SET model = 'opus' WHERE model IS NULL;
+UPDATE public.agents SET reasoning_effort = 'high'
+WHERE runtime = 'claude' AND reasoning_effort IS NULL;
 UPDATE public.agents SET reasoning_effort = 'medium'
 WHERE runtime = 'codex' AND reasoning_effort IS NULL;
 
@@ -37,7 +39,7 @@ BEGIN
 
   ALTER TABLE public.agents
     ADD CONSTRAINT agents_reasoning_effort_check
-    CHECK (reasoning_effort IS NULL OR reasoning_effort IN ('low', 'medium', 'high', 'xhigh'));
+    CHECK (reasoning_effort IS NULL OR reasoning_effort IN ('low', 'medium', 'high', 'xhigh', 'max'));
 END $$;
 
 CREATE TABLE IF NOT EXISTS public.agent_runtime_settings (
@@ -110,6 +112,19 @@ BEGIN
       AND tablename = 'channels'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.channels;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'server_members'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.server_members;
   END IF;
 END $$;
 

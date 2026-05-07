@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { ChevronDownIcon, CheckIcon, PlusIcon, PencilIcon, LogOutIcon, MonitorIcon, Trash2Icon } from "lucide-react";
 import { GeneratedAvatar } from "./generated-avatar";
+import { notifyServerDataChanged } from "@/lib/server-data-events";
 
 interface Server {
   id: string;
@@ -137,24 +138,6 @@ export function Sidebar({
       setBridgeOnline(hasRecentHeartbeat);
     }
 
-    // Get all channels in this server that the user is a member of
-    const { data: memberships } = await supabase
-      .from("channel_members")
-      .select("channel_id")
-      .eq("member_id", user.id);
-
-    if (!memberships || memberships.length === 0) return;
-
-    const channelIds = memberships.map((m) => m.channel_id);
-    const { data: channels } = await supabase
-      .from("channels")
-      .select("*")
-      .eq("server_id", serverId)
-      .in("id", channelIds)
-      .order("created_at");
-
-    if (!channels) return;
-
     // Get all agents in this server
     const { data: allAgents } = await supabase
       .from("agents")
@@ -164,6 +147,32 @@ export function Sidebar({
 
     const agentList = (allAgents || []) as Agent[];
     setAgents(agentList);
+
+    // Get all channels in this server that the user is a member of
+    const { data: memberships } = await supabase
+      .from("channel_members")
+      .select("channel_id")
+      .eq("member_id", user.id);
+
+    if (!memberships || memberships.length === 0) {
+      setDmChannels([]);
+      setGroupChannels([]);
+      return;
+    }
+
+    const channelIds = memberships.map((m) => m.channel_id);
+    const { data: channels } = await supabase
+      .from("channels")
+      .select("*")
+      .eq("server_id", serverId)
+      .in("id", channelIds)
+      .order("created_at");
+
+    if (!channels) {
+      setDmChannels([]);
+      setGroupChannels([]);
+      return;
+    }
 
     // Separate DM and group channels
     const dms: DmChannel[] = [];
@@ -255,6 +264,7 @@ export function Sidebar({
               prev.filter((dm) => dm.agent?.id !== deleted.id)
             );
           }
+          notifyServerDataChanged({ serverId, resource: "agents" });
           loadData();
         }
       )
@@ -262,6 +272,7 @@ export function Sidebar({
         "postgres_changes",
         { event: "*", schema: "public", table: "channels" },
         () => {
+          notifyServerDataChanged({ serverId, resource: "channels" });
           loadData();
         }
       )
@@ -365,7 +376,9 @@ export function Sidebar({
       return;
     }
 
-    await loadData();
+    setGroupChannels((prev) => prev.filter((item) => item.id !== channel.id));
+    notifyServerDataChanged({ serverId, resource: "channels" });
+    void loadData();
     if (activeChannelId === channel.id) {
       router.push(`/s/${serverSlug}`);
     }

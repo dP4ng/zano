@@ -82,13 +82,21 @@ export function isKnownModelForRuntime(runtime: RuntimeId, model: unknown): mode
 }
 
 export function defaultReasoningEffortForRuntime(runtime: RuntimeId): string | null {
-  return runtime === "codex" ? "medium" : null;
+  if (runtime === "claude") return "high";
+  if (runtime === "codex") return "medium";
+  return null;
 }
 
 export function isKnownReasoningEffortForRuntime(
   runtime: RuntimeId,
   value: unknown
 ): value is string {
+  if (runtime === "claude") {
+    return (
+      typeof value === "string" &&
+      ["low", "medium", "high", "xhigh", "max"].includes(value)
+    );
+  }
   return (
     runtime === "codex" &&
     typeof value === "string" &&
@@ -152,6 +160,10 @@ const claudeDriver: RuntimeDriver = {
       "--model",
       ctx.model,
     ];
+
+    if (ctx.reasoningEffort) {
+      args.push("--effort", ctx.reasoningEffort);
+    }
 
     if (ctx.sessionId) {
       args.push("--resume", ctx.sessionId);

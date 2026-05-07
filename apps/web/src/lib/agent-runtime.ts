@@ -1,5 +1,5 @@
 export type AgentRuntime = "claude" | "codex" | "kimi";
-export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export const RUNTIME_ITEMS: Array<{ value: AgentRuntime; label: string }> = [
   { value: "claude", label: "Claude Code" },
@@ -34,6 +34,14 @@ export const REASONING_EFFORT_ITEMS: Array<{
   { value: "xhigh", label: "Extra High" },
 ];
 
+const CLAUDE_REASONING_EFFORT_ITEMS: Array<{
+  value: AgentReasoningEffort;
+  label: string;
+}> = [
+  ...REASONING_EFFORT_ITEMS,
+  { value: "max", label: "Max" },
+];
+
 export function normalizeAgentRuntime(value: unknown): AgentRuntime {
   return value === "codex" || value === "kimi" || value === "claude"
     ? value
@@ -49,13 +57,23 @@ export function runtimeSupportsModelSelection(runtime: AgentRuntime): boolean {
 }
 
 export function runtimeSupportsReasoningEffort(runtime: AgentRuntime): boolean {
-  return runtime === "codex";
+  return runtime === "claude" || runtime === "codex";
 }
 
 export function defaultReasoningEffortForRuntime(
   runtime: AgentRuntime
 ): AgentReasoningEffort | null {
-  return runtimeSupportsReasoningEffort(runtime) ? "medium" : null;
+  if (runtime === "claude") return "high";
+  if (runtime === "codex") return "medium";
+  return null;
+}
+
+export function reasoningEffortItemsForRuntime(
+  runtime: AgentRuntime
+): Array<{ value: AgentReasoningEffort; label: string }> {
+  if (runtime === "claude") return CLAUDE_REASONING_EFFORT_ITEMS;
+  if (runtime === "codex") return REASONING_EFFORT_ITEMS;
+  return [];
 }
 
 export function isValidModelForRuntime(
@@ -79,6 +97,6 @@ export function isValidReasoningEffortForRuntime(
   return (
     runtimeSupportsReasoningEffort(runtime) &&
     typeof value === "string" &&
-    REASONING_EFFORT_ITEMS.some((item) => item.value === value)
+    reasoningEffortItemsForRuntime(runtime).some((item) => item.value === value)
   );
 }

@@ -46,7 +46,7 @@ create table public.agents (
   system_prompt text,
   runtime text default 'claude' not null check (runtime in ('claude', 'codex', 'kimi')),
   model text default 'opus' not null,
-  reasoning_effort text check (reasoning_effort is null or reasoning_effort in ('low', 'medium', 'high', 'xhigh')),
+  reasoning_effort text check (reasoning_effort is null or reasoning_effort in ('low', 'medium', 'high', 'xhigh', 'max')),
   status text default 'offline' check (status in ('online', 'sleeping', 'offline')),
   session_id text,
   workspace_path text,
@@ -225,8 +225,9 @@ create policy "Channel members can manage tasks" on public.tasks for all using (
 -- -----------------------------------------------------------
 -- Realtime
 -- -----------------------------------------------------------
--- Enable realtime for messages, agents, and channel_members tables
+-- Enable realtime for messages, agents, channels, channel_members, and server_members tables
 alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.agents;
 alter publication supabase_realtime add table public.channels;
 alter publication supabase_realtime add table public.channel_members;
+alter publication supabase_realtime add table public.server_members;

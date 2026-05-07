@@ -25,10 +25,10 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   MODEL_ITEMS_BY_RUNTIME,
-  REASONING_EFFORT_ITEMS,
   RUNTIME_ITEMS,
   defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
+  reasoningEffortItemsForRuntime,
   runtimeSupportsModelSelection,
   runtimeSupportsReasoningEffort,
   type AgentReasoningEffort,
@@ -123,11 +123,15 @@ export function CreateAgentDialog({
   }
 
   const modelItems = MODEL_ITEMS_BY_RUNTIME[runtime];
+  const reasoningItems = reasoningEffortItemsForRuntime(runtime);
   const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === runtime) ?? RUNTIME_ITEMS[0];
   const selectedModel = modelItems.find((m) => m.value === model) ?? modelItems[0];
+  const defaultReasoningEffort = defaultReasoningEffortForRuntime(runtime);
   const selectedReasoningEffort =
-    REASONING_EFFORT_ITEMS.find((item) => item.value === reasoningEffort) ??
-    REASONING_EFFORT_ITEMS[1];
+    reasoningItems.find(
+      (item) => item.value === (reasoningEffort ?? defaultReasoningEffort)
+    ) ??
+    reasoningItems[0];
   const showModelSelect = runtimeSupportsModelSelection(runtime);
   const showReasoningSelect = runtimeSupportsReasoningEffort(runtime);
 
@@ -227,13 +231,13 @@ export function CreateAgentDialog({
                         );
                       }
                     }}
-                    items={REASONING_EFFORT_ITEMS}
+                    items={reasoningItems}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select reasoning" />
                     </SelectTrigger>
                     <SelectPopup>
-                      {REASONING_EFFORT_ITEMS.map((item) => (
+                      {reasoningItems.map((item) => (
                         <SelectItem key={item.value} value={item}>
                           {item.label}
                         </SelectItem>

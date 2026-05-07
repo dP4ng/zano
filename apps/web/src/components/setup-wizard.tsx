@@ -25,10 +25,10 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { CheckIcon, CopyIcon, LoaderIcon, MonitorIcon, TerminalIcon } from "lucide-react";
 import {
   MODEL_ITEMS_BY_RUNTIME,
-  REASONING_EFFORT_ITEMS,
   RUNTIME_ITEMS,
   defaultReasoningEffortForRuntime,
   defaultModelForRuntime,
+  reasoningEffortItemsForRuntime,
   runtimeSupportsModelSelection,
   runtimeSupportsReasoningEffort,
   type AgentReasoningEffort,
@@ -166,11 +166,15 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
   }
 
   const modelItems = MODEL_ITEMS_BY_RUNTIME[agentRuntime];
+  const reasoningItems = reasoningEffortItemsForRuntime(agentRuntime);
   const selectedRuntime = RUNTIME_ITEMS.find((item) => item.value === agentRuntime) ?? RUNTIME_ITEMS[0];
   const selectedModel = modelItems.find((m) => m.value === agentModel) ?? modelItems[0];
+  const defaultReasoningEffort = defaultReasoningEffortForRuntime(agentRuntime);
   const selectedReasoningEffort =
-    REASONING_EFFORT_ITEMS.find((item) => item.value === agentReasoningEffort) ??
-    REASONING_EFFORT_ITEMS[1];
+    reasoningItems.find(
+      (item) => item.value === (agentReasoningEffort ?? defaultReasoningEffort)
+    ) ??
+    reasoningItems[0];
   const showModelSelect = runtimeSupportsModelSelection(agentRuntime);
   const showReasoningSelect = runtimeSupportsReasoningEffort(agentRuntime);
 
@@ -361,13 +365,13 @@ export function SetupWizard({ serverId, serverSlug, onComplete }: SetupWizardPro
                             );
                           }
                         }}
-                        items={REASONING_EFFORT_ITEMS}
+                        items={reasoningItems}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select reasoning" />
                         </SelectTrigger>
                         <SelectPopup>
-                          {REASONING_EFFORT_ITEMS.map((item) => (
+                          {reasoningItems.map((item) => (
                             <SelectItem key={item.value} value={item}>
                               {item.label}
                             </SelectItem>
