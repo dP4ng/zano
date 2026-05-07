@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,6 +43,41 @@ test("claude driver supports effort levels and passes them to Claude Code", () =
   assert.deepEqual(
     launch.args.slice(launch.args.indexOf("--effort"), launch.args.indexOf("--effort") + 2),
     ["--effort", "max"]
+  );
+});
+
+test("claude driver writes per-agent env settings for Claude Code", () => {
+  const workDir = mkdtempSync(join(tmpdir(), "zano-claude-"));
+  const zanoDir = join(workDir, ".zano");
+  mkdirSync(zanoDir);
+  const driver = getRuntimeDriver("claude");
+  const launch = driver.buildLaunch({
+    agentId: "agent-1",
+    displayName: "Claude Agent",
+    workDir,
+    systemPrompt: "system instructions",
+    model: "opus",
+    reasoningEffort: "high",
+    sessionId: null,
+    zanoDir,
+    env: baseEnv,
+    settingsEnv: {
+      USER_API_KEY: "from-db",
+      EMPTY_VALUE: "",
+    },
+  });
+
+  const settingsIndex = launch.args.indexOf("--settings");
+  assert.notEqual(settingsIndex, -1);
+  assert.equal(launch.args[settingsIndex + 1], join(zanoDir, "claude-settings.json"));
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(zanoDir, "claude-settings.json"), "utf-8")),
+    {
+      env: {
+        USER_API_KEY: "from-db",
+        EMPTY_VALUE: "",
+      },
+    }
   );
 });
 

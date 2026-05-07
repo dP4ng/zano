@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type RuntimeId = "claude" | "codex" | "kimi";
@@ -15,6 +15,7 @@ export interface RuntimeLaunchContext {
   sessionId: string | null;
   zanoDir: string;
   env: NodeJS.ProcessEnv;
+  settingsEnv?: Record<string, string>;
 }
 
 export interface RuntimeLaunch {
@@ -139,6 +140,20 @@ function withClaudeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return next;
 }
 
+function writeClaudeSettings(zanoDir: string, env: Record<string, string> | undefined): string | null {
+  const entries = Object.entries(env ?? {});
+  if (entries.length === 0) return null;
+
+  const settingsPath = join(zanoDir, "claude-settings.json");
+  writeFileSync(
+    settingsPath,
+    JSON.stringify({ env: Object.fromEntries(entries) }, null, 2),
+    { mode: 0o600 }
+  );
+  chmodSync(settingsPath, 0o600);
+  return settingsPath;
+}
+
 const claudeDriver: RuntimeDriver = {
   id: "claude",
   displayName: "Claude Code",
@@ -167,6 +182,11 @@ const claudeDriver: RuntimeDriver = {
 
     if (ctx.sessionId) {
       args.push("--resume", ctx.sessionId);
+    }
+
+    const settingsPath = writeClaudeSettings(ctx.zanoDir, ctx.settingsEnv);
+    if (settingsPath) {
+      args.push("--settings", settingsPath);
     }
 
     return {

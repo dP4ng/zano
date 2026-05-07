@@ -538,19 +538,11 @@ ${agent.description || agent.display_name}
   private buildAgentEnv(
     agentId: string,
     transport: CliTransport,
-    runtime: RuntimeId,
-    dbEnv: Record<string, string>
+    runtimeEnv: Record<string, string>
   ): NodeJS.ProcessEnv {
-    const runtimeEnv = loadLocalRuntimeEnv({
-      serverId: this.serverId,
-      agentId,
-      runtime,
-    });
-
     return {
       ...process.env,
       ...runtimeEnv,
-      ...dbEnv,
       FORCE_COLOR: "0",
       NO_COLOR: "1",
       // CLI injection: agent identity + Supabase credentials
@@ -563,6 +555,21 @@ ${agent.description || agent.display_name}
         : {}),
       // Prepend .zano/ to PATH so `zano` command is available
       PATH: `${transport.zanoDir}:${process.env.PATH ?? ""}`,
+    };
+  }
+
+  private loadAgentRuntimeEnv(
+    agentId: string,
+    runtime: RuntimeId,
+    dbEnv: Record<string, string>
+  ): Record<string, string> {
+    return {
+      ...loadLocalRuntimeEnv({
+        serverId: this.serverId,
+        agentId,
+        runtime,
+      }),
+      ...dbEnv,
     };
   }
 
@@ -603,6 +610,11 @@ ${agent.description || agent.display_name}
     // Prepare CLI transport (.zano/ wrapper + env vars)
     const transport = this.prepareCliTransport(agentId, session);
     const driver = getRuntimeDriver(runtime);
+    const runtimeEnv = this.loadAgentRuntimeEnv(
+      agentId,
+      runtime,
+      await this.loadAgentEnvVars(agentId)
+    );
 
     // Resume previous session: check in-memory first, then Supabase
     const prevProc = this.processes.get(agentId);
@@ -617,12 +629,8 @@ ${agent.description || agent.display_name}
       reasoningEffort,
       sessionId,
       zanoDir: transport.zanoDir,
-      env: this.buildAgentEnv(
-        agentId,
-        transport,
-        runtime,
-        await this.loadAgentEnvVars(agentId)
-      ),
+      env: this.buildAgentEnv(agentId, transport, runtimeEnv),
+      settingsEnv: runtimeEnv,
     });
 
     if (launch.sessionId && launch.sessionId !== sessionId) {
