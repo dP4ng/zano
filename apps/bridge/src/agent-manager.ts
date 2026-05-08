@@ -46,8 +46,15 @@ interface AgentSession {
 
 interface QueuedMessage {
   userMessage: string;
+  channelId: string;
   resolve: () => void;
   reject: (err: Error) => void;
+}
+
+interface ActiveResponse {
+  channelId: string;
+  startedAt: string;
+  text: string;
 }
 
 interface AgentProcess {
@@ -65,6 +72,8 @@ interface AgentProcess {
   messageQueue: QueuedMessage[];
   /** Accumulated text content from assistant text events */
   pendingText: string;
+  /** Full assistant text for the active turn, used as a DB fallback. */
+  activeResponse: ActiveResponse | null;
 }
 
 interface CliTransport {
@@ -302,7 +311,11 @@ ${agent.description || agent.display_name}
    * sequentially — the next message is only sent after the current
    * turn completes (indicated by a "result" stream-json event).
    */
-  async sendToAgent(agentId: string, userMessage: string): Promise<void> {
+  async sendToAgent(
+    agentId: string,
+    userMessage: string,
+    channelId: string
+  ): Promise<void> {
     const session = this.sessions.get(agentId);
     if (!session) {
       throw new Error(`Agent ${agentId} not initialized`);
@@ -352,25 +365,26 @@ ${agent.description || agent.display_name}
       (agentProc.driver.requiresSessionBeforeInput && !agentProc.sessionId) ||
       (agentProc.busy && !agentProc.driver.supportsSteer)
     ) {
-      return this.queueMessage(agentProc, session, userMessage);
+      return this.queueMessage(agentProc, session, userMessage, channelId);
     }
 
     // Send immediately
-    if (!this.deliverMessage(agentId, agentProc, session, userMessage)) {
-      return this.queueMessage(agentProc, session, userMessage);
+    if (!this.deliverMessage(agentId, agentProc, session, userMessage, channelId)) {
+      return this.queueMessage(agentProc, session, userMessage, channelId);
     }
   }
 
   private queueMessage(
     agentProc: AgentProcess,
     session: AgentSession,
-    userMessage: string
+    userMessage: string,
+    channelId: string
   ): Promise<void> {
     console.log(
       `  [${session.displayName}] Agent busy or starting, queueing message (${userMessage.length} chars, queue size: ${agentProc.messageQueue.length + 1})...`
     );
     return new Promise<void>((resolve, reject) => {
-      agentProc.messageQueue.push({ userMessage, resolve, reject });
+      agentProc.messageQueue.push({ userMessage, channelId, resolve, reject });
     });
   }
 
@@ -379,7 +393,8 @@ ${agent.description || agent.display_name}
     agentId: string,
     agentProc: AgentProcess,
     session: AgentSession,
-    userMessage: string
+    userMessage: string,
+    channelId: string
   ): boolean {
     const stdinMsg = agentProc.driver.encodeUserMessage({
       userMessage,
@@ -394,6 +409,11 @@ ${agent.description || agent.display_name}
       `  [${displayName}] Forwarding message to ${agentProc.driver.displayName} (${userMessage.length} chars)...`
     );
     agentProc.busy = true;
+    agentProc.activeResponse = {
+      channelId,
+      startedAt: new Date().toISOString(),
+      text: "",
+    };
     this.broadcastActivity(agentId, "working", "Working", "Message received");
     agentProc.proc.stdin?.write(stdinMsg + "\n");
     return true;
@@ -409,7 +429,7 @@ ${agent.description || agent.display_name}
       console.log(
         `  [${session.displayName}] Draining queue (${agentProc.messageQueue.length} remaining)...`
       );
-      if (this.deliverMessage(agentId, agentProc, session, next.userMessage)) {
+      if (this.deliverMessage(agentId, agentProc, session, next.userMessage, next.channelId)) {
         // Resolve the queued promise — message has been delivered
         next.resolve();
       } else {
@@ -661,6 +681,7 @@ ${agent.description || agent.display_name}
       heartbeatTimer: null,
       messageQueue: [],
       pendingText: "",
+      activeResponse: null,
     };
 
     // Broadcast initial activity
@@ -758,6 +779,9 @@ ${agent.description || agent.display_name}
 
       case "text":
         agentProc.pendingText += event.text || "";
+        if (agentProc.activeResponse) {
+          agentProc.activeResponse.text += event.text || "";
+        }
         break;
 
       case "tool_call": {
@@ -796,6 +820,13 @@ ${agent.description || agent.display_name}
       case "turn_end":
         // Flush any final text
         this.flushPendingText(agentId, agentProc);
+        this.persistFallbackResponse(agentId, agentProc).catch((err) => {
+          console.error(
+            `  [${displayName}] Failed to persist fallback response: ${
+              err instanceof Error ? err.message : err
+            }`
+          );
+        });
         // Turn is complete — save session ID
         if (event.sessionId) {
           agentProc.sessionId = event.sessionId;
@@ -821,6 +852,42 @@ ${agent.description || agent.display_name}
           agentProc.messageQueue = [];
         }
         break;
+    }
+  }
+
+  private async persistFallbackResponse(agentId: string, agentProc: AgentProcess) {
+    const response = agentProc.activeResponse;
+    agentProc.activeResponse = null;
+    if (!response) return;
+
+    const content = response.text.trim();
+    if (!content) return;
+
+    const { data: existing, error: existingError } = await this.supabase
+      .from("messages")
+      .select("id")
+      .eq("channel_id", response.channelId)
+      .eq("sender_id", agentId)
+      .eq("sender_type", "agent")
+      .is("thread_parent_id", null)
+      .gte("created_at", response.startedAt)
+      .limit(1);
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+    if (existing && existing.length > 0) return;
+
+    const { error } = await this.supabase.from("messages").insert({
+      channel_id: response.channelId,
+      sender_id: agentId,
+      sender_type: "agent",
+      content,
+      thread_parent_id: null,
+    });
+
+    if (error) {
+      throw new Error(error.message);
     }
   }
 

@@ -390,7 +390,7 @@ export class Bridge {
           : `${msgHeader} ${msg.content}`;
 
         // Fire-and-forget: agent handles all responses via `zano` CLI
-        await this.agentManager.sendToAgent(agentId, prompt);
+        await this.agentManager.sendToAgent(agentId, prompt, msg.channel_id);
       } catch (err) {
         console.error(
           `  [${agent.display_name}] Error:`,
