@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter, useParams } from "next/navigation";
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -10,7 +10,6 @@ import { EditChannelDialog } from "./edit-channel-dialog";
 import { MachineDetailDialog } from "./machine-detail-dialog";
 import { ContextMenu } from "./context-menu";
 import { useAgentActivity } from "@/hooks/use-agent-activity";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { ChevronDownIcon, CheckIcon, PlusIcon, PencilIcon, LogOutIcon, MonitorIcon, Trash2Icon } from "lucide-react";
 import { GeneratedAvatar } from "./generated-avatar";
@@ -61,7 +60,7 @@ export function Sidebar({
 }) {
   const [dmChannels, setDmChannels] = useState<DmChannel[]>([]);
   const [groupChannels, setGroupChannels] = useState<Channel[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [, setAgents] = useState<Agent[]>([]);
   const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("");
@@ -73,6 +72,7 @@ export function Sidebar({
   const [machineKeys, setMachineKeys] = useState<MachineKey[]>([]);
   // Heartbeat-based online status (bridge updates last_used_at every 30s)
   const [bridgeOnline, setBridgeOnline] = useState(false);
+  const bridgeOnlineRef = useRef(false);
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
   const [selectedMachine, setSelectedMachine] = useState<MachineKey | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -80,10 +80,15 @@ export function Sidebar({
     y: number;
     channel: Channel;
   } | null>(null);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const params = useParams();
   const agentActivities = useAgentActivity();
+
+  const setBridgeOnlineState = useCallback((online: boolean) => {
+    bridgeOnlineRef.current = online;
+    setBridgeOnline(online);
+  }, []);
 
   // Determine active channel from URL
   const activeChannelId = params.channelId as string | undefined;
@@ -211,17 +216,30 @@ export function Sidebar({
 
   // Set up realtime subscriptions (stable across navigations, only recreate on server change)
   useEffect(() => {
-    let presenceChannel: ReturnType<typeof supabase.channel> | null = null;
+    const presenceTopic = `bridge-presence:${serverId}`;
+
+    for (const channel of supabase.getChannels()) {
+      if (channel.topic === `realtime:${presenceTopic}`) {
+        supabase.removeChannel(channel);
+      }
+    }
+
+    const presenceChannel = supabase.channel(presenceTopic);
 
     function refreshPresence() {
-      if (!presenceChannel) return;
       const state = presenceChannel.presenceState();
       const entries = Object.values(state).flat() as Array<{
         hostname?: string;
         agentIds?: string[];
       }>;
-      setBridgeOnline(entries.length > 0);
+      setBridgeOnlineState(entries.length > 0);
     }
+
+    presenceChannel
+      .on("presence", { event: "sync" }, refreshPresence)
+      .on("presence", { event: "join" }, refreshPresence)
+      .on("presence", { event: "leave" }, refreshPresence)
+      .subscribe();
 
     const realtimeSub = supabase
       .channel("sidebar-realtime")
@@ -304,21 +322,15 @@ export function Sidebar({
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          // WebSocket is fully established — now safe to subscribe to Presence
-          presenceChannel = supabase.channel(`bridge-presence:${serverId}`);
-          presenceChannel
-            .on("presence", { event: "sync" }, refreshPresence)
-            .on("presence", { event: "join" }, refreshPresence)
-            .on("presence", { event: "leave" }, refreshPresence)
-            .subscribe();
+          refreshPresence();
         }
       });
 
     // Heartbeat polling fallback: check last_used_at every 15s
     async function checkHeartbeat() {
       // Skip if Presence is working (entries exist or bridge just went offline via Presence)
-      if (presenceChannel) {
-        refreshPresence();
+      refreshPresence();
+      if (bridgeOnlineRef.current) {
         return;
       }
       const { data: keys } = await supabase
@@ -327,7 +339,7 @@ export function Sidebar({
         .eq("server_id", serverId);
       if (keys) {
         const now = Date.now();
-        setBridgeOnline(
+        setBridgeOnlineState(
           keys.some(
             (k: { last_used_at: string | null }) =>
               k.last_used_at && now - new Date(k.last_used_at).getTime() < 60_000
@@ -341,9 +353,9 @@ export function Sidebar({
     return () => {
       clearInterval(heartbeatInterval);
       supabase.removeChannel(realtimeSub);
-      if (presenceChannel) supabase.removeChannel(presenceChannel);
+      supabase.removeChannel(presenceChannel);
     };
-  }, [serverId]);
+  }, [serverId, supabase, loadData, setBridgeOnlineState]);
 
   function navigateToChannel(channel: Channel) {
     const prefix = channel.type === "dm" ? "dm" : "channel";
