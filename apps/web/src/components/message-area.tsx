@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,9 +8,7 @@ import { GearSix } from '@phosphor-icons/react';
 import TiptapMessageInput, { type TiptapMessageInputHandle } from './tiptap-message-input';
 import { useAgentActivity } from '@/hooks/use-agent-activity';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { GeneratedAvatar } from './generated-avatar';
 
 interface Message {
@@ -64,8 +62,28 @@ export function MessageArea({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const inputRef = useRef<TiptapMessageInputHandle>(null);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const agentActivities = useAgentActivity();
+
+  const mergeMessages = useCallback((incoming: Message[]) => {
+    if (incoming.length === 0) return;
+
+    setMessages((prev) => {
+      const seen = new Set(prev.map((m) => m.id));
+      const next = [...prev];
+      for (const msg of incoming) {
+        if (!msg.thread_parent_id && !seen.has(msg.id)) {
+          seen.add(msg.id);
+          next.push(msg);
+        }
+      }
+      if (next.length === prev.length) return prev;
+      return next.sort((a, b) => {
+        if (a.seq !== null && b.seq !== null) return a.seq - b.seq;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+    });
+  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -144,10 +162,7 @@ export function MessageArea({
         (payload) => {
           const newMsg = payload.new as Message;
           if (!newMsg.thread_parent_id) {
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newMsg.id)) return prev;
-              return [...prev, newMsg];
-            });
+            mergeMessages([newMsg]);
             if (newMsg.sender_type === 'agent') {
               setAgentTyping(false);
               typingStartRef.current = null;
@@ -163,7 +178,41 @@ export function MessageArea({
       supabase.removeChannel(subscription);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- channel is memoized; only re-run when channel ID changes
-  }, [channel?.id, supabase]);
+  }, [channel?.id, supabase, mergeMessages]);
+
+  useEffect(() => {
+    if (!channel || messages.length === 0) return;
+
+    const poll = async () => {
+      const latestSeq = Math.max(...messages.map((m) => m.seq ?? 0));
+      if (!latestSeq) return;
+
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('channel_id', channel.id)
+        .is('thread_parent_id', null)
+        .gt('seq', latestSeq)
+        .order('seq', { ascending: true })
+        .limit(50);
+
+      if (data && data.length > 0) {
+        const incoming = data as Message[];
+        mergeMessages(incoming);
+        if (incoming.some((msg) => msg.sender_type === 'agent')) {
+          setAgentTyping(false);
+          typingStartRef.current = null;
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = null;
+          }
+        }
+      }
+    };
+
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [channel, messages, supabase, mergeMessages]);
 
   useEffect(() => {
     if (!agentTyping || !channel) return;
@@ -183,15 +232,7 @@ export function MessageArea({
         .limit(10);
 
       if (data && data.length > 0) {
-        setMessages((prev) => {
-          let updated = [...prev];
-          for (const msg of data) {
-            if (!updated.some((m) => m.id === msg.id)) {
-              updated.push(msg as Message);
-            }
-          }
-          return updated.length > prev.length ? updated : prev;
-        });
+        mergeMessages(data as Message[]);
         setAgentTyping(false);
         typingStartRef.current = null;
         if (typingTimeoutRef.current) {
@@ -203,7 +244,7 @@ export function MessageArea({
 
     const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
-  }, [agentTyping, channel, supabase]);
+  }, [agentTyping, channel, supabase, mergeMessages]);
 
   useEffect(() => {
     if (isNearBottomRef.current) {
@@ -438,8 +479,6 @@ export function MessageArea({
             prevMsg &&
             prevMsg.sender_id === msg.sender_id &&
             new Date(msg.created_at).getTime() - new Date(prevMsg.created_at).getTime() < 5 * 60 * 1000;
-          const isOwn = msg.sender_id === userId;
-
           return (
             <div
               key={msg.id}

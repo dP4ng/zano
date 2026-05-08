@@ -1,11 +1,33 @@
 -- Fix RLS policies to avoid circular dependency issues
 
--- Helper function to check channel membership without circular RLS dependency
-CREATE OR REPLACE FUNCTION public.user_is_channel_member(channel_uuid uuid)
+-- Helper functions to check channel membership without circular RLS dependency.
+-- Keep SECURITY DEFINER helpers outside exposed schemas.
+CREATE SCHEMA IF NOT EXISTS private;
+
+CREATE OR REPLACE FUNCTION private.user_is_channel_member(channel_uuid uuid)
 RETURNS boolean AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.channel_members
     WHERE channel_id = channel_uuid AND member_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+
+CREATE OR REPLACE FUNCTION private.user_owns_agent(agent_uuid uuid)
+RETURNS boolean AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.agents
+    WHERE id = agent_uuid AND owner_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+
+CREATE OR REPLACE FUNCTION private.user_has_agent_in_channel(channel_uuid uuid)
+RETURNS boolean AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.channel_members cm
+    JOIN public.agents a ON a.id = cm.member_id
+    WHERE cm.channel_id = channel_uuid
+      AND cm.member_type = 'agent'
+      AND a.owner_id = auth.uid()
   );
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
@@ -14,7 +36,10 @@ DROP POLICY IF EXISTS "Members can view channel membership" ON public.channel_me
 DROP POLICY IF EXISTS "Users can view own channel memberships" ON public.channel_members;
 CREATE POLICY "Users can view channel memberships"
   ON public.channel_members FOR SELECT
-  USING (public.user_is_channel_member(channel_id));
+  USING (
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
+  );
 
 -- Also allow inserting members (for channel creation flow)
 DROP POLICY IF EXISTS "Users can add channel members" ON public.channel_members;
@@ -49,9 +74,8 @@ DROP POLICY IF EXISTS "Channel members can view messages" ON public.messages;
 CREATE POLICY "Users can view messages in their channels"
   ON public.messages FOR SELECT
   USING (
-    channel_id IN (
-      SELECT channel_id FROM public.channel_members WHERE member_id = auth.uid()
-    )
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
   );
 
 -- Messages: users can send messages in channels they're members of
@@ -59,9 +83,14 @@ DROP POLICY IF EXISTS "Channel members can send messages" ON public.messages;
 CREATE POLICY "Users can send messages in their channels"
   ON public.messages FOR INSERT
   WITH CHECK (
-    sender_id = auth.uid()
-    AND channel_id IN (
-      SELECT channel_id FROM public.channel_members WHERE member_id = auth.uid()
+    (
+      sender_id = auth.uid()
+      AND private.user_is_channel_member(channel_id)
+    )
+    OR
+    (
+      private.user_owns_agent(sender_id)
+      AND private.user_has_agent_in_channel(channel_id)
     )
   );
 

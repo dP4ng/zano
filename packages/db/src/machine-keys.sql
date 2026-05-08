@@ -38,8 +38,19 @@ CREATE POLICY "Users can delete own keys"
 -- Helper functions for bridge auth
 -- ============================================================
 
+CREATE SCHEMA IF NOT EXISTS private;
+
+-- Check if current user is a direct member of a given channel
+CREATE OR REPLACE FUNCTION private.user_is_channel_member(channel_uuid uuid)
+RETURNS boolean AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.channel_members
+    WHERE channel_id = channel_uuid AND member_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+
 -- Check if a given agent is owned by the current user
-CREATE OR REPLACE FUNCTION public.user_owns_agent(agent_uuid uuid)
+CREATE OR REPLACE FUNCTION private.user_owns_agent(agent_uuid uuid)
 RETURNS boolean AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.agents WHERE id = agent_uuid AND owner_id = auth.uid()
@@ -47,7 +58,7 @@ RETURNS boolean AS $$
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
 -- Check if current user has an agent in a given channel
-CREATE OR REPLACE FUNCTION public.user_has_agent_in_channel(chan_uuid uuid)
+CREATE OR REPLACE FUNCTION private.user_has_agent_in_channel(chan_uuid uuid)
 RETURNS boolean AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.channel_members cm
@@ -71,8 +82,8 @@ DROP POLICY IF EXISTS "Channel members can view messages" ON public.messages;
 CREATE POLICY "Users can view messages in their channels"
   ON public.messages FOR SELECT
   USING (
-    public.user_is_channel_member(channel_id)
-    OR public.user_has_agent_in_channel(channel_id)
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
   );
 
 -- Messages INSERT: user sends own message OR sends as their agent
@@ -84,13 +95,13 @@ CREATE POLICY "Users can send messages in their channels"
     (
       -- User sends as themselves
       sender_id = auth.uid()
-      AND public.user_is_channel_member(channel_id)
+      AND private.user_is_channel_member(channel_id)
     )
     OR
     (
       -- User sends as their own agent
-      public.user_owns_agent(sender_id)
-      AND public.user_has_agent_in_channel(channel_id)
+      private.user_owns_agent(sender_id)
+      AND private.user_has_agent_in_channel(channel_id)
     )
   );
 
@@ -100,8 +111,8 @@ DROP POLICY IF EXISTS "Members can view channel membership" ON public.channel_me
 CREATE POLICY "Users can view channel memberships"
   ON public.channel_members FOR SELECT
   USING (
-    public.user_is_channel_member(channel_id)
-    OR public.user_has_agent_in_channel(channel_id)
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
   );
 
 -- Channels SELECT: also allow if user owns an agent that is a member
@@ -113,7 +124,7 @@ CREATE POLICY "Users can view their channels"
     type = 'public'
     OR created_by = auth.uid()
     OR id IN (SELECT channel_id FROM public.channel_members WHERE member_id = auth.uid())
-    OR public.user_has_agent_in_channel(id)
+    OR private.user_has_agent_in_channel(id)
   );
 
 -- Tasks: also allow if user owns an agent in the channel
@@ -121,16 +132,16 @@ DROP POLICY IF EXISTS "Channel members can view tasks" ON public.tasks;
 CREATE POLICY "Channel members can view tasks"
   ON public.tasks FOR SELECT
   USING (
-    public.user_is_channel_member(channel_id)
-    OR public.user_has_agent_in_channel(channel_id)
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
   );
 
 DROP POLICY IF EXISTS "Channel members can manage tasks" ON public.tasks;
 CREATE POLICY "Channel members can manage tasks"
   ON public.tasks FOR ALL
   USING (
-    public.user_is_channel_member(channel_id)
-    OR public.user_has_agent_in_channel(channel_id)
+    private.user_is_channel_member(channel_id)
+    OR private.user_has_agent_in_channel(channel_id)
   );
 
 -- Agents UPDATE: owners can update their agents (already exists, but ensure it works)

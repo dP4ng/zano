@@ -193,18 +193,56 @@ create policy "Members can view channel membership" on public.channel_members fo
   )
 );
 
+-- Bridge helpers: a bridge authenticates as the owning user, but may send as
+-- one of that user's agents. Keep SECURITY DEFINER helpers outside exposed schemas.
+create schema if not exists private;
+
+create or replace function private.user_is_channel_member(channel_uuid uuid)
+returns boolean as $$
+  select exists (
+    select 1 from public.channel_members
+    where channel_id = channel_uuid and member_id = auth.uid()
+  );
+$$ language sql security definer stable;
+
+create or replace function private.user_owns_agent(agent_uuid uuid)
+returns boolean as $$
+  select exists (
+    select 1 from public.agents
+    where id = agent_uuid and owner_id = auth.uid()
+  );
+$$ language sql security definer stable;
+
+create or replace function private.user_has_agent_in_channel(channel_uuid uuid)
+returns boolean as $$
+  select exists (
+    select 1 from public.channel_members cm
+    join public.agents a on a.id = cm.member_id
+    where cm.channel_id = channel_uuid
+      and cm.member_type = 'agent'
+      and a.owner_id = auth.uid()
+  );
+$$ language sql security definer stable;
+
 -- Messages: channel members can read and write
 create policy "Channel members can view messages" on public.messages for select using (
   exists (
     select 1 from public.channel_members
     where channel_id = messages.channel_id and member_id = auth.uid()
   )
+  or private.user_has_agent_in_channel(channel_id)
 );
 create policy "Channel members can send messages" on public.messages for insert with check (
-  auth.uid() = sender_id and
-  exists (
-    select 1 from public.channel_members
-    where channel_id = messages.channel_id and member_id = auth.uid()
+  (
+    auth.uid() = sender_id and
+    exists (
+      select 1 from public.channel_members
+      where channel_id = messages.channel_id and member_id = auth.uid()
+    )
+  )
+  or (
+    private.user_owns_agent(sender_id)
+    and private.user_has_agent_in_channel(channel_id)
   )
 );
 
